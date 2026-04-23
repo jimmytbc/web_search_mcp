@@ -12,3 +12,10 @@ wheels/
 # Local environment overrides
 .env
 
+# Tooling caches (added proactively; no-op until tools are introduced)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
