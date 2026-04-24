@@ -434,5 +434,5 @@ Not implemented in Phase 2 (by design — these land in later phases):
 - Secondary dedupe heuristics (same-domain + near-title). Canonical URL
   is the only dedupe signal.
 
-See `prompts/phase-2.md` for the full phase contract and `CLAUDE.md` for
-the active rules of engagement.
+Phase build contracts and per-session rules of engagement are kept as
+local dev artifacts and are not published with the repo.
