@@ -15,6 +15,84 @@ evidence-friendly payload for a downstream LLM agent.
 - Phase 3 adds the Exa adapter and mode-based routing. Phase 4 adds
   `fetch_url` and `search_health`.
 
+## Why multi-provider search?
+
+A single search engine is a single retrieval bias, a single rate-limit
+ceiling, and a single point of failure. An LLM agent reasoning over
+search results cannot tell — from one provider alone — whether a URL is
+genuinely authoritative or just happens to rank well in that engine's
+particular algorithm. This MCP queries multiple independent providers
+in parallel and fuses their results so the agent gets a richer, more
+trustworthy signal.
+
+### What each provider contributes
+
+| Provider   | What it brings                                                                                                | Phase |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ----- |
+| **SearXNG**| Self-hosted meta-search; aggregates Google, Bing, DuckDuckGo, Qwant, Startpage, Wikipedia, and many more through a single endpoint. Free, private, and provides keyword-search breadth. | 1     |
+| **Brave**  | Independent web index (not a Google re-ranker). Official API with stable response contract. Fast, commercial-grade quality. | 2     |
+| **Exa**    | Semantic / embedding-based retrieval — finds conceptually similar content that keyword search misses.         | 3     |
+
+Each provider has a different retrieval bias. Keyword engines surface
+pages that match query terms; Exa's semantic search surfaces pages
+that match query *meaning*; meta-search catches the long tail of
+niche sites. Together they approximate a much broader view of the web
+than any one alone.
+
+### How this helps a downstream LLM agent
+
+The fusion layer turns per-provider raw results into a payload an agent
+can reason over directly:
+
+- **Provenance on every result.** Each result carries a `providers`
+  array listing which engines surfaced it, plus a `provider_overlap`
+  count. The agent can distinguish "cross-confirmed by two independent
+  providers" from "surfaced by one provider only."
+- **Confidence as a quantitative priority signal.** The `confidence`
+  field combines rank, overlap, domain trust, and recency into a
+  single `0.0–1.0` score. An agent deciding which URLs to deeply
+  investigate (via a scraper, for example) can thresh at, say, `0.5`
+  and skip weaker hits — no prompt engineering needed.
+- **Graceful degradation the agent can reason about.** `search_status`
+  reports `ok` / `degraded` / `partial_failure` / `failed` with a
+  plain-English `warnings` array when things go sideways. An agent
+  observing `partial_failure` knows the result set is incomplete and
+  can choose to retry, broaden the query, or surface the gap to its
+  user instead of silently presenting a thin answer as complete.
+- **URL canonicalization across providers.** `utm_*` / `fbclid` /
+  `gclid` / `ref` tracking params are stripped before dedupe, so two
+  providers returning the same page with different tracking tags are
+  correctly recognized as one result (not double-counted as "two
+  independent confirmations").
+- **Bias reduction through overlap scoring.** A result returned by two
+  independent providers ranks above results returned by only one, even
+  if any single provider ranked the solo result higher. This is the
+  simplest possible form of cross-source triangulation — good enough
+  to consistently promote canonical sources over SEO-optimized noise.
+- **Normalized schema across providers.** Brave's `age` / `page_age`,
+  SearXNG's `publishedDate`, and (future) Exa's metadata all map into
+  the same `published_date` field. The agent writes one parser, not
+  three.
+- **Transparent, tunable scoring.** All weights live in one file
+  (`tools/search_web.py`) with inline comments. No black-box reranker
+  — if an operator decides recency matters more, it's a one-line edit.
+
+### What this MCP is NOT
+
+- **Not an AI search engine.** No LLM calls happen inside this server.
+  It fuses raw provider output and returns structured JSON — the
+  reasoning stays with the calling agent.
+- **Not a content fetcher.** `search_web` returns URLs + snippets.
+  Extracting full page content is left to the caller (e.g., a
+  downstream `fetch_url` MCP, Firecrawl, Playwright). This separation
+  is deliberate: search and fetch have very different failure modes
+  and rate limits, and coupling them would hurt both.
+- **Not a replacement for RAG over curated corpora.** When you know
+  exactly which documents matter, a vector DB over that corpus beats
+  open-web search. This MCP is for the case where the agent doesn't
+  know what it doesn't know and needs to discover relevant URLs on
+  the open web first.
+
 ## Requirements
 
 - Python 3.11
