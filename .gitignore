@@ -21,4 +21,5 @@ htmlcov/
 
 # Internal dev artifacts — not published with the repo
 prompts/
+probes/
 

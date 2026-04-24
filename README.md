@@ -218,37 +218,6 @@ in `.gitignore` and will not be committed.
 `env` block of `claude_desktop_config.json` (see the sample below). Values
 here travel with the Claude Desktop profile rather than the repo checkout.
 
-## Run the Phase 2 probe
-
-The probe is a standing diagnostic. Run it before expecting the server to
-work, and rerun it after any provider / contract change to isolate whether
-an issue is on the provider side or our side.
-
-```
-uv run python probes/phase-2-probe.py
-```
-
-Assertions, in order:
-
-1. `BRAVE_API_KEY` env presence. Warn-only if missing — the probe continues
-   and skips assertion 2.
-2. GET to Brave `/res/v1/web/search` returns JSON with the expected
-   `web.results[]` shape. Skipped if assertion 1 warned.
-3. `asyncio.gather` with a per-coroutine timeout returns the fast coroutine
-   and drops the slow one — proves the parallel-orchestration pattern.
-4. `fusion.canonicalize.canonicalize_url` collapses `utm_*` / `fbclid` /
-   `gclid` / `ref` variants, lowercases scheme+host, and strips trailing
-   slashes (except root).
-
-Expected summary:
-
-```
-SUMMARY: 4/4 assertions passed. Phase 0 gate OPEN.
-```
-
-The Phase 1 probe (`probes/phase-1-probe.py`) remains in the tree as a
-standing SearXNG/FastMCP diagnostic.
-
 ## Run the server
 
 ```
@@ -396,14 +365,6 @@ any provider. Visible in the server logs as `cache HIT`.
 
 ## Diagnostics
 
-Each phase ships a probe under `probes/`. They are retained permanently
-and exist to isolate provider-contract issues from code issues:
-
-```
-uv run python probes/phase-1-probe.py   # FastMCP + SearXNG surface
-uv run python probes/phase-2-probe.py   # Brave + parallel-gather + canonicalize
-```
-
 For ad-hoc queries against the full fusion pipeline without going through
 Claude Desktop, a convenience script is provided:
 
@@ -416,10 +377,9 @@ Output is the same JSON the MCP would return. Uses `.env` for
 configuration, so make sure `BRAVE_API_KEY` is set at the repo root
 (not inside `.venv/`) if you want multi-provider output.
 
-If a downstream caller reports broken results, run the probes first. If
-the Phase 2 probe warns that `BRAVE_API_KEY` is unset but otherwise
-passes, and the server still misbehaves, the issue is in the handler or
-fusion layer — not the provider.
+If a downstream caller reports broken results, this script is the
+fastest way to isolate the MCP's fused output from anything happening
+client-side.
 
 ## Phase 2 limitations
 
