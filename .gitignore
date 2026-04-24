@@ -23,3 +23,13 @@ htmlcov/
 prompts/
 probes/
 
+# Editor / IDE / local tooling state
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS metadata
+.DS_Store
+
+
