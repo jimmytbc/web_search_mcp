@@ -92,6 +92,9 @@ def compute_confidence(raw_rank: int) -> float:
 
 def normalize(raw: RawSearchResult) -> NormalizedResult:
     domain = extract_domain(raw.url)
+    # Phase 2: keep published_date from the raw result when the provider
+    # supplies one (Brave exposes `age` / `page_age`; SearXNG typically
+    # does not). Phase 1's SearXNG path still lands here with None.
     return NormalizedResult(
         title=raw.title,
         url=raw.url,
@@ -99,9 +102,13 @@ def normalize(raw: RawSearchResult) -> NormalizedResult:
         domain=domain,
         providers=[raw.provider],
         provider_overlap=1,
-        published_date=None,  # SearXNG does not reliably surface dates in Phase 1.
+        published_date=raw.published_date,
         content_type=classify_content_type(domain),
+        # Confidence here is a provisional per-provider value. The
+        # search_web handler recomputes it after fusion using the
+        # locked rank-based formula documented in the handoff.
         confidence=compute_confidence(raw.raw_rank),
+        raw_ranks={raw.provider: raw.raw_rank},
     )
 
 
