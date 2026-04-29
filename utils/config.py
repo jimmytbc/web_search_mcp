@@ -39,11 +39,16 @@ class Config:
     brave_safesearch: str
     recency_window_days: int
     max_results_upper_bound: int = MAX_RESULTS_UPPER_BOUND
+    tavily_api_key: Optional[str] = None
     brave_max_results_ceiling: int = BRAVE_MAX_RESULTS_CEILING
 
     @property
     def brave_enabled(self) -> bool:
         return bool(self.brave_api_key)
+
+    @property
+    def tavily_enabled(self) -> bool:
+        return bool(self.tavily_api_key)
 
 
 def _get_str(name: str) -> Optional[str]:
@@ -87,4 +92,5 @@ def load_config() -> Config:
         brave_default_search_lang=_get_str("BRAVE_DEFAULT_SEARCH_LANG"),
         brave_safesearch=(_get_str("BRAVE_SAFESEARCH") or DEFAULT_BRAVE_SAFESEARCH),
         recency_window_days=_get_int("RECENCY_WINDOW_DAYS", DEFAULT_RECENCY_WINDOW_DAYS),
+        tavily_api_key=_get_str("TAVILY_API_KEY"),
     )

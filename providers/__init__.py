@@ -10,6 +10,7 @@ from __future__ import annotations
 from providers.base import SearchProvider
 from providers.brave import BraveProvider
 from providers.searxng import SearxngProvider
+from providers.tavily import TavilyProvider
 from utils.config import Config
 from utils.logging import get_logger
 
@@ -48,6 +49,17 @@ def build_providers(config: Config) -> list[SearchProvider]:
         log.info(
             "Brave disabled: BRAVE_API_KEY not set. Running in SearXNG-only mode."
         )
+
+    if config.tavily_enabled:
+        providers.append(
+            TavilyProvider(
+                api_key=config.tavily_api_key or "",
+                timeout_seconds=config.search_timeout_seconds,
+            )
+        )
+        log.info("Tavily enabled")
+    else:
+        log.info("Tavily disabled: TAVILY_API_KEY not set.")
 
     return providers
 
