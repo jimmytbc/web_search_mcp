@@ -133,6 +133,7 @@ avoid permanent `degraded` status on every query:
 | `brave`             | Scrapes `brave.com` HTML. Brave aggressively blocks scrapers and this MCP already calls Brave's API directly - fully redundant. |
 | `brave.images` / `.videos` / `.news` | Same issue; same redundancy.                                                               |
 | `karmasearch` (all variants) | Upstream meta-search with frequent availability issues; tends to time out and flood the warnings array. |
+| `duckduckgo`        | Frequently flagged as unresponsive in live testing — surfaces as a persistent `"SearXNG reported unresponsive engines: duckduckgo"` warning that pushes every query to `degraded` status. |
 
 **How to disable** - edit SearXNG's `settings.yml`. For each engine
 listed above, add `disabled: true` as the last line of its block:
