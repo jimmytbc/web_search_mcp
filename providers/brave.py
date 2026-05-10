@@ -74,14 +74,19 @@ class BraveProvider:
             resp = await client.get(url, params=params, headers=headers)
 
         if resp.status_code != 200:
+            body = (resp.text or "").strip().replace("\n", " ")[:200]
+            body_clause = f" body={body!r}" if body else ""
             raise BraveError(
-                f"Brave returned HTTP {resp.status_code} for query {query!r}"
+                f"Brave returned HTTP {resp.status_code} for query {query!r}{body_clause}"
             )
 
         try:
             payload = resp.json()
         except ValueError as e:
-            raise BraveError(f"Brave returned non-JSON response: {e}") from e
+            body = (resp.text or "").strip().replace("\n", " ")[:200]
+            raise BraveError(
+                f"Brave returned non-JSON response: {e} body={body!r}"
+            ) from e
 
         web = payload.get("web") or {}
         raw = web.get("results") if isinstance(web, dict) else None

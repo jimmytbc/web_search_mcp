@@ -67,14 +67,19 @@ class ExaProvider:
             resp = await client.post(url, json=body, headers=headers)
 
         if resp.status_code != 200:
+            body = (resp.text or "").strip().replace("\n", " ")[:200]
+            body_clause = f" body={body!r}" if body else ""
             raise ExaError(
-                f"Exa returned HTTP {resp.status_code} for query {query!r}"
+                f"Exa returned HTTP {resp.status_code} for query {query!r}{body_clause}"
             )
 
         try:
             payload = resp.json()
         except ValueError as e:
-            raise ExaError(f"Exa returned non-JSON response: {e}") from e
+            body = (resp.text or "").strip().replace("\n", " ")[:200]
+            raise ExaError(
+                f"Exa returned non-JSON response: {e} body={body!r}"
+            ) from e
 
         raw = payload.get("results")
         if not isinstance(raw, list):

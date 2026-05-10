@@ -45,21 +45,19 @@ them.
 
 ## Phase 3 — items surfaced during implementation
 
-- **Live Brave HTTP 422 observed once during Claude Desktop testing
-  (2026-05-10).** A multi-intent product-comparison query
-  ("Fujifilm X100VI vs Ricoh GR IV review and price") returned
-  HTTP 422 from Brave's `/res/v1/web/search`. Five reproduction
-  attempts immediately afterward (simple, quoted, very long,
-  rapid-fire repeats) all returned HTTP 200 — so the rejection
-  appears transient (likely Brave-side moderation heuristic, brief
-  rate-limit, or classifier quirk), not deterministic on query
-  shape. Graceful-degradation behavior worked as designed: Brave
-  failure was caught, pipeline continued with searxng + exa, and
-  `search_status: "partial_failure"` was set. No code change made
-  per CLAUDE.md §5.3. If this recurs and a pattern emerges, worth
-  capturing the actual Brave 422 response body (currently we only
-  surface "Brave returned HTTP 422 for query …" — the response
-  body itself is discarded).
+- **Live Brave HTTP 422 observed during Claude Desktop testing
+  (2026-05-10).** Four-of-four Brave calls in a ~6-minute window
+  returned HTTP 422 (`Ricoh GR IV review price 2025`, three Singapore
+  AI-courses queries). Direct curl with the literal failing query +
+  same params ~10 minutes later returned HTTP 200, confirming the
+  cause was a **timing-windowed Brave-side issue**, not query shape,
+  count, or auth. Graceful-degradation behavior worked as designed:
+  Brave failure was caught, pipeline continued with searxng + exa,
+  and `search_status: "partial_failure"` was set on each call.
+  Resolved follow-up: `providers/brave.py` now captures the response
+  body (truncated 200 chars) in the BraveError message so the next
+  occurrence will surface the actual upstream reason. Same change
+  applied to `providers/exa.py` for symmetry.
 - Exa's joined-highlights snippet can be very long when Exa returns
   multiple long highlights for content-heavy pages (CoinGecko,
   CoinDesk on a "bitcoin price" query returned snippets in the 2-3KB
