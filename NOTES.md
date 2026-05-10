@@ -42,3 +42,29 @@ them.
   implemented canonicalize.py first, then reran the probe green
   before proceeding. Noting here in case future phases want to keep
   probes strictly about external contracts.
+
+## Phase 3 — items surfaced during implementation
+
+- **Live Brave HTTP 422 observed once during Claude Desktop testing
+  (2026-05-10).** A multi-intent product-comparison query
+  ("Fujifilm X100VI vs Ricoh GR IV review and price") returned
+  HTTP 422 from Brave's `/res/v1/web/search`. Five reproduction
+  attempts immediately afterward (simple, quoted, very long,
+  rapid-fire repeats) all returned HTTP 200 — so the rejection
+  appears transient (likely Brave-side moderation heuristic, brief
+  rate-limit, or classifier quirk), not deterministic on query
+  shape. Graceful-degradation behavior worked as designed: Brave
+  failure was caught, pipeline continued with searxng + exa, and
+  `search_status: "partial_failure"` was set. No code change made
+  per CLAUDE.md §5.3. If this recurs and a pattern emerges, worth
+  capturing the actual Brave 422 response body (currently we only
+  surface "Brave returned HTTP 422 for query …" — the response
+  body itself is discarded).
+- Exa's joined-highlights snippet can be very long when Exa returns
+  multiple long highlights for content-heavy pages (CoinGecko,
+  CoinDesk on a "bitcoin price" query returned snippets in the 2-3KB
+  range). Spec is satisfied (` " ... ".join(highlights) `) but
+  downstream agents working under context pressure may want a
+  shorter snippet. Candidate follow-ups: cap snippet length at e.g.
+  500 chars, or trim per-highlight. No code change made — flagging
+  for product-owner triage.
