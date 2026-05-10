@@ -45,18 +45,28 @@ them.
 
 ## Phase 3 — items surfaced during implementation
 
-- **Live Brave HTTP 422 observed during Claude Desktop testing
-  (2026-05-10).** Four-of-four Brave calls in a ~6-minute window
-  returned HTTP 422 (`Ricoh GR IV review price 2025`, three Singapore
-  AI-courses queries). Direct curl with the literal failing query +
-  same params ~10 minutes later returned HTTP 200, confirming the
-  cause was a **timing-windowed Brave-side issue**, not query shape,
-  count, or auth. Graceful-degradation behavior worked as designed:
-  Brave failure was caught, pipeline continued with searxng + exa,
-  and `search_status: "partial_failure"` was set on each call.
-  Resolved follow-up: `providers/brave.py` now captures the response
-  body (truncated 200 chars) in the BraveError message so the next
-  occurrence will surface the actual upstream reason. Same change
+- **Live Brave HTTP 422s during Claude Desktop testing (2026-05-10) —
+  root cause: stale `BRAVE_API_KEY` in `claude_desktop_config.json`
+  overriding the valid key in `.env`.** Diagnostic timeline:
+  initial hypothesis was transient Brave-side outage (CLI
+  reproductions returned HTTP 200), then briefly query-shape
+  (year-token "2025" pattern — also wrong). The body-capture commit
+  (`c264085`) revealed Brave's actual response on the next batch:
+  `"detail": "The provided subscription token is invalid.",
+  "meta": {"component": "authentication"}`. A direct CLI curl with
+  the key from `.env` then returned HTTP 200, isolating the gap to
+  the Claude-Desktop-spawned process specifically. The
+  `claude_desktop_config.json` `env` block contained an older key
+  that took precedence over `.env` (Python's `load_dotenv()` defers
+  to existing env vars by default). Operator removed the stale key
+  from the Desktop config; MCP now falls back to `.env` and Brave
+  returned `status=ok` on the post-restart `precision`-mode test.
+  Lessons: (1) the body-capture change is the load-bearing
+  improvement here — without it the misdiagnosis would have
+  persisted; (2) the README already documents that Desktop env
+  overrides `.env`, but the *failure mode* (stale Desktop key
+  silently winning over fresh `.env` key) is worth flagging if
+  this trap recurs for other operators. Same body-capture change
   applied to `providers/exa.py` for symmetry.
 - Exa's joined-highlights snippet can be very long when Exa returns
   multiple long highlights for content-heavy pages (CoinGecko,
