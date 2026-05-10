@@ -7,13 +7,15 @@ evidence-friendly payload for a downstream LLM agent.
 ## Status
 
 - **Phase 1 - shipped.** MCP skeleton + SearXNG adapter operational.
-- **Phase 2 - current.** Adds the Brave Search adapter, multi-provider
+- **Phase 2 - shipped.** Adds the Brave Search adapter, multi-provider
   parallel orchestration, URL canonicalization, canonical-URL dedupe with
   provenance merging, light reranking (overlap / trusted-domain / recency
   bonuses), and populated warnings (`degraded` / `partial_failure` plus
   low-diversity heuristics).
-- Phase 3 adds the Exa adapter and mode-based routing. Phase 4 adds
-  `fetch_url` and `search_health`.
+- **Phase 3 - current.** Adds the Exa semantic-search adapter and
+  activates mode-based routing (`balanced` / `recall` / `precision`
+  each select a different provider subset).
+- Phase 4 adds `fetch_url` and `search_health`.
 
 ## Why multi-provider search?
 
@@ -102,8 +104,11 @@ can reason over directly:
   ```
   curl 'http://localhost:8888/search?format=json&q=python' | head
   ```
-- Optional: a Brave Search API key. If omitted, the server runs
-  SearXNG-only and logs a one-line notice at startup.
+- Optional: a Brave Search API key (`BRAVE_API_KEY`) and/or an Exa
+  API key (`EXA_API_KEY`). If either is omitted, the server logs a
+  one-line notice at startup and that provider is skipped. Modes that
+  require a missing provider degrade to whatever subset is available
+  (see [Mode-routing matrix](#mode-routing-matrix) below).
 
 ## Setup
 
@@ -202,19 +207,23 @@ If specific engines still appear in warnings, add them to your
 | `BRAVE_DEFAULT_COUNTRY`     | no       | *(unset)*                   | Two-letter ISO country code. Examples: `US`, `GB`, `SG`, `DE`. Unset = no localization.                    |
 | `BRAVE_DEFAULT_SEARCH_LANG` | no       | *(unset)*                   | Two-letter language code. Examples: `en`, `es`, `fr`, `ja`. Unset = no language hint.                      |
 | `BRAVE_SAFESEARCH`          | no       | `moderate`                  | Brave SafeSearch level. Valid: `off` / `moderate` / `strict`.                                              |
+| `EXA_API_KEY`               | no       | *(unset)*                   | Exa API key. Unset = Exa disabled. Required for `recall` and `precision` modes (see mode-routing matrix).  |
+| `EXA_API_BASE`              | no       | `https://api.exa.ai`        | Exa API base URL. Override only for non-default endpoints.                                                 |
+| `EXA_NUM_RESULTS_CEILING`   | no       | `10`                        | Cap on `numResults` sent to Exa per request. Tune down to reduce per-call cost. Any positive integer.      |
 | `RECENCY_WINDOW_DAYS`       | no       | `30`                        | Days from today inside which a dated result earns a ranking recency bonus. Any positive integer.           |
 
-### Registering a Brave API key
+### Registering provider API keys (Brave, Exa)
 
-Either path works - pick one. The server loads `.env` via `python-dotenv` at
-startup, so values set via the Claude Desktop config `env` block override
-anything in `.env` for that launch.
+Either path works - pick one per key. The server loads `.env` via
+`python-dotenv` at startup, so values set via the Claude Desktop config
+`env` block override anything in `.env` for that launch.
 
 **Option A - local `.env` file (recommended for development).**
-Copy `.env.example` → `.env` and fill in `BRAVE_API_KEY`. The `.env` file is
-in `.gitignore` and will not be committed.
+Copy `.env.example` → `.env` and fill in `BRAVE_API_KEY` and/or
+`EXA_API_KEY`. The `.env` file is in `.gitignore` and will not be
+committed.
 
-**Option B - Claude Desktop config `env` block.** Put the key in the
+**Option B - Claude Desktop config `env` block.** Put the keys in the
 `env` block of `claude_desktop_config.json` (see the sample below). Values
 here travel with the Claude Desktop profile rather than the repo checkout.
 
@@ -245,7 +254,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       ],
       "env": {
         "SEARXNG_BASE_URL": "http://localhost:8888",
-        "BRAVE_API_KEY": "your-brave-subscription-token"
+        "BRAVE_API_KEY": "your-brave-subscription-token",
+        "EXA_API_KEY": "your-exa-api-key"
       }
     }
   }
@@ -269,8 +279,25 @@ Restart Claude Desktop after editing.
 - `query` (string, required)
 - `max_results` (int, optional, default 5, clamped to 1..10)
 - `mode` (string, optional, default `"balanced"`, one of
-  `"balanced" | "recall" | "precision"`). Phase 2 routes every mode to
-  every enabled provider; mode-based routing arrives in Phase 3.
+  `"balanced" | "recall" | "precision"`). Each mode routes to a
+  different provider subset — see [Mode-routing matrix](#mode-routing-matrix).
+
+### Mode-routing matrix
+
+| Mode        | Providers called          | Intent                                                  |
+| ----------- | ------------------------- | ------------------------------------------------------- |
+| `balanced`  | `searxng`, `brave`, `exa` | Default. All three for maximum cross-source confirmation. |
+| `recall`    | `searxng`, `exa`          | Breadth + semantic discovery; drops the commercial keyword index. |
+| `precision` | `brave`, `exa`            | Commercial-grade keyword + semantic; drops the meta-search long tail. |
+
+Fusion behavior (canonicalization, dedupe, ranking, confidence) is
+identical across all three modes — only the called provider set
+differs. If a mode's subset names a provider that is not enabled
+(missing API key), the pipeline continues with whatever intersection
+is available and emits a descriptive warning naming the missing env
+var. If the intersection is empty (e.g., `precision` mode with neither
+`BRAVE_API_KEY` nor `EXA_API_KEY` set), the call returns
+`search_status: "failed"` without contacting any provider.
 
 **Response shape (multi-provider, healthy case):**
 
@@ -278,7 +305,7 @@ Restart Claude Desktop after editing.
 {
   "query": "bitcoin price",
   "search_status": "ok",
-  "providers_used": ["searxng", "brave"],
+  "providers_used": ["searxng", "brave", "exa"],
   "warnings": [],
   "results": [
     {
@@ -286,8 +313,8 @@ Restart Claude Desktop after editing.
       "url": "https://www.coingecko.com/en/coins/bitcoin",
       "snippet": "Bitcoin live price, market cap, and volume.",
       "domain": "coingecko.com",
-      "providers": ["searxng", "brave"],
-      "provider_overlap": 2,
+      "providers": ["searxng", "brave", "exa"],
+      "provider_overlap": 3,
       "published_date": "2026-04-20T12:00:00Z",
       "content_type": "market_data",
       "confidence": 1.0
@@ -352,9 +379,9 @@ After sort+trim the handler checks two heuristics and emits descriptive
 warnings if either triggers:
 
 - **Single-domain dominance** - more than 70% of results share a domain.
-- **Single-provider dominance** - when both providers were called but one
-  was the sole source on more than 90% of the final results
-  (cross-confirmed results don't count toward either provider's solo tally).
+- **Single-provider dominance** - when at least two providers were called
+  but one was the sole source on more than 90% of the final results
+  (cross-confirmed results don't count toward any provider's solo tally).
 
 ## Cache behavior
 
@@ -374,25 +401,25 @@ uv run python scripts/query.py "your query" 10 precision   # max_results + mode
 ```
 
 Output is the same JSON the MCP would return. Uses `.env` for
-configuration, so make sure `BRAVE_API_KEY` is set at the repo root
-(not inside `.venv/`) if you want multi-provider output.
+configuration, so make sure `BRAVE_API_KEY` and `EXA_API_KEY` are set
+at the repo root (not inside `.venv/`) if you want full multi-provider
+output. Modes that require a missing key will degrade with a warning.
 
 If a downstream caller reports broken results, this script is the
 fastest way to isolate the MCP's fused output from anything happening
 client-side.
 
-## Phase 2 limitations
+## Phase 3 limitations
 
-Not implemented in Phase 2 (by design - these land in later phases):
+Not implemented in Phase 3 (by design - these land in later phases):
 
-- Exa provider adapter (Phase 3)
-- Mode-based routing to different provider subsets (Phase 3). All three
-  modes currently route to every enabled provider.
 - `fetch_url` tool (Phase 4)
 - `search_health` tool (Phase 4)
 - Persistent cache, on-disk TTL, authentication, HTTP/SSE transport
 - Secondary dedupe heuristics (same-domain + near-title). Canonical URL
   is the only dedupe signal.
+- In-MCP cost or rate-limit logic for paid providers (Brave, Exa).
+  Delegated to the operator.
 
 Phase build contracts and per-session rules of engagement are kept as
 local dev artifacts and are not published with the repo.

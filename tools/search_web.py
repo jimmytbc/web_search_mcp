@@ -1,15 +1,21 @@
-"""The `search_web` tool handler — Phase 2 fusion pipeline.
+"""The `search_web` tool handler — fusion pipeline with mode routing.
 
-Phase 2 behavior:
-  - `mode` is still pass-through: all three values route to every
-    enabled provider. Mode-based routing arrives in Phase 3 with Exa.
+Phase 3 behavior:
+  - `mode` selects a provider subset:
+      balanced  → [searxng, brave, exa]
+      recall    → [searxng, exa]
+      precision → [brave, exa]
+    A mode-required provider that is not enabled emits a descriptive
+    warning naming its env var; the pipeline continues with whatever
+    intersection remains. If the intersection is empty the call
+    returns `search_status: "failed"` without contacting any provider.
+  - Fusion behavior is identical across modes — only the called
+    provider set differs.
   - Providers run in parallel via `asyncio.gather` with per-provider
     soft timeouts.
   - Results are normalized, canonicalized, deduped across providers,
     ranked, trimmed, and have `confidence` recomputed before output.
-  - The final response shape is unchanged from Phase 1 (handoff §11);
-    the difference is that `providers_used`, `provider_overlap`,
-    `warnings`, and `confidence` are now meaningful across providers.
+  - The final response shape is unchanged from Phase 1 (handoff §11).
 """
 
 from __future__ import annotations
@@ -31,6 +37,24 @@ log = get_logger(__name__)
 
 Mode = Literal["balanced", "recall", "precision"]
 _ALLOWED_MODES = {"balanced", "recall", "precision"}
+
+# Mode-routing matrix. Each mode maps to the set of provider names it
+# wants called. Filtering against this set is an intersection with
+# whatever providers are actually enabled at startup, so a mode that
+# names a disabled provider degrades gracefully rather than failing.
+_MODE_ROUTING: dict[str, frozenset[str]] = {
+    "balanced": frozenset({"searxng", "brave", "exa"}),
+    "recall": frozenset({"searxng", "exa"}),
+    "precision": frozenset({"brave", "exa"}),
+}
+
+# Provider name -> env var that gates its enablement. Used to name the
+# missing key in degradation warnings. SearXNG is always enabled (local
+# runtime dependency) so it has no entry here.
+_PROVIDER_REQUIRED_ENV: dict[str, str] = {
+    "brave": "BRAVE_API_KEY",
+    "exa": "EXA_API_KEY",
+}
 
 # Low-diversity thresholds — spec-defined, centralized for clarity.
 _DOMAIN_DIVERSITY_THRESHOLD = 0.70
@@ -57,6 +81,32 @@ def _normalize_mode(mode: str) -> Mode:
     if mode in _ALLOWED_MODES:
         return mode  # type: ignore[return-value]
     return "balanced"
+
+
+def _select_providers_for_mode(
+    mode: Mode,
+    available: list[SearchProvider],
+) -> tuple[list[SearchProvider], list[str]]:
+    """Filter `available` to the subset this mode wants.
+
+    Returns (selected_providers, degradation_warnings). Order is
+    preserved from `available`. A mode-required provider that is not
+    in `available` produces a descriptive warning naming its env var
+    so an operator can diagnose without reading code.
+    """
+    wanted = _MODE_ROUTING[mode]
+    available_names = {p.name for p in available}
+    selected = [p for p in available if p.name in wanted]
+    missing = sorted(wanted - available_names)
+
+    warnings: list[str] = []
+    for name in missing:
+        env_var = _PROVIDER_REQUIRED_ENV.get(name)
+        env_clause = f" ({env_var} not set)" if env_var else ""
+        warnings.append(
+            f"{mode} mode degraded: {name} not enabled{env_clause}"
+        )
+    return selected, warnings
 
 
 async def _call_provider(
@@ -200,22 +250,57 @@ async def run_search_web(
         )
         return cached
 
+    # Mode routing — filter `providers` to the subset this mode wants.
+    # Degradation warnings are prepended so they appear before any
+    # provider-call warnings in the final response.
+    selected_providers, mode_warnings = _select_providers_for_mode(
+        effective_mode, providers
+    )
+    if not selected_providers:
+        wanted = sorted(_MODE_ROUTING[effective_mode])
+        missing_envs = sorted(
+            {
+                _PROVIDER_REQUIRED_ENV[name]
+                for name in wanted
+                if name in _PROVIDER_REQUIRED_ENV
+            }
+        )
+        env_clause = (
+            f" requires {' and/or '.join(missing_envs)} (none set)"
+            if missing_envs
+            else ""
+        )
+        log.warning(
+            "%s mode unavailable: no providers enabled in subset=%s",
+            effective_mode,
+            wanted,
+        )
+        return {
+            "query": query,
+            "search_status": "failed",
+            "providers_used": [],
+            "warnings": [
+                f"{effective_mode} mode unavailable:{env_clause}"
+            ],
+            "results": [],
+        }
+
     log.info(
         "cache MISS query=%r mode=%s max_results=%d providers=%s",
         query,
         effective_mode,
         effective_max,
-        [p.name for p in providers],
+        [p.name for p in selected_providers],
     )
 
     # Step 2 — parallel provider calls with per-provider soft timeout.
     timeout = config.search_timeout_seconds
     provider_outcomes = await asyncio.gather(
-        *[_call_provider(p, query, effective_max, timeout) for p in providers],
+        *[_call_provider(p, query, effective_max, timeout) for p in selected_providers],
         return_exceptions=False,
     )
 
-    warnings: list[str] = []
+    warnings: list[str] = list(mode_warnings)
     providers_called: list[str] = []
     providers_failed: list[str] = []
     providers_contributed: list[str] = []

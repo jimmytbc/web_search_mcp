@@ -25,6 +25,8 @@ DEFAULT_BRAVE_API_BASE = "https://api.search.brave.com"
 DEFAULT_BRAVE_SAFESEARCH = "moderate"
 DEFAULT_RECENCY_WINDOW_DAYS = 30
 BRAVE_MAX_RESULTS_CEILING = 20
+DEFAULT_EXA_API_BASE = "https://api.exa.ai"
+DEFAULT_EXA_NUM_RESULTS_CEILING = 10
 
 
 @dataclass(frozen=True)
@@ -38,12 +40,19 @@ class Config:
     brave_default_search_lang: Optional[str]
     brave_safesearch: str
     recency_window_days: int
+    exa_api_base: str
+    exa_api_key: Optional[str]
     max_results_upper_bound: int = MAX_RESULTS_UPPER_BOUND
     brave_max_results_ceiling: int = BRAVE_MAX_RESULTS_CEILING
+    exa_num_results_ceiling: int = DEFAULT_EXA_NUM_RESULTS_CEILING
 
     @property
     def brave_enabled(self) -> bool:
         return bool(self.brave_api_key)
+
+    @property
+    def exa_enabled(self) -> bool:
+        return bool(self.exa_api_key)
 
 
 def _get_str(name: str) -> Optional[str]:
@@ -77,6 +86,7 @@ def _get_int(name: str, default: int) -> int:
 def load_config() -> Config:
     base_url = os.environ.get("SEARXNG_BASE_URL", DEFAULT_SEARXNG_BASE_URL).rstrip("/")
     brave_api_base = os.environ.get("BRAVE_API_BASE", DEFAULT_BRAVE_API_BASE).rstrip("/")
+    exa_api_base = os.environ.get("EXA_API_BASE", DEFAULT_EXA_API_BASE).rstrip("/")
     return Config(
         searxng_base_url=base_url,
         search_timeout_seconds=_get_float("SEARCH_TIMEOUT_SECONDS", DEFAULT_SEARCH_TIMEOUT_SECONDS),
@@ -87,4 +97,7 @@ def load_config() -> Config:
         brave_default_search_lang=_get_str("BRAVE_DEFAULT_SEARCH_LANG"),
         brave_safesearch=(_get_str("BRAVE_SAFESEARCH") or DEFAULT_BRAVE_SAFESEARCH),
         recency_window_days=_get_int("RECENCY_WINDOW_DAYS", DEFAULT_RECENCY_WINDOW_DAYS),
+        exa_api_base=exa_api_base,
+        exa_api_key=_get_str("EXA_API_KEY"),
+        exa_num_results_ceiling=_get_int("EXA_NUM_RESULTS_CEILING", DEFAULT_EXA_NUM_RESULTS_CEILING),
     )

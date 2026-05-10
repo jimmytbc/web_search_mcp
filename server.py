@@ -3,8 +3,11 @@
 Registers exactly one tool (`search_web`). `fetch_url` and
 `search_health` are reserved for Phase 4 and are not registered here.
 
-Phase 2: provider set is assembled via `build_providers`, which enables
-Brave when `BRAVE_API_KEY` is set and falls back to SearXNG-only otherwise.
+Provider set is assembled via `build_providers`, which enables Brave
+when `BRAVE_API_KEY` is set and Exa when `EXA_API_KEY` is set. Either
+or both can be omitted; the server runs on whatever subset is
+available (SearXNG is always enabled as a local runtime dependency).
+Mode-based routing in `tools/search_web.py` filters that set per call.
 """
 
 from __future__ import annotations
@@ -38,9 +41,14 @@ async def search_web(
     Args:
         query: Search query string. Required.
         max_results: Maximum results to return (1–10, default 5).
-        mode: One of "balanced" | "recall" | "precision". Phase 2 routes
-            all modes to every enabled provider; mode-based routing
-            arrives in Phase 3.
+        mode: One of "balanced" | "recall" | "precision". Routing matrix:
+            balanced  → [searxng, brave, exa]
+            recall    → [searxng, exa]
+            precision → [brave, exa]
+            Disabled providers in a mode's subset are skipped with a
+            descriptive warning. If the subset is empty, the call
+            returns search_status="failed" without contacting any
+            provider.
 
     Returns:
         A normalized MCP response:

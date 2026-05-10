@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from providers.base import SearchProvider
 from providers.brave import BraveProvider
+from providers.exa import ExaProvider
 from providers.searxng import SearxngProvider
 from utils.config import Config
 from utils.logging import get_logger
@@ -20,9 +21,10 @@ def build_providers(config: Config) -> list[SearchProvider]:
     """Return the list of enabled providers in call order.
 
     SearXNG is always enabled (local runtime dependency). Brave is
-    enabled only when BRAVE_API_KEY is set; otherwise a single INFO
-    log line is emitted and Brave is skipped so the server can still
-    run SearXNG-only.
+    enabled only when BRAVE_API_KEY is set, Exa only when EXA_API_KEY
+    is set; otherwise a single INFO log line is emitted per provider
+    and that provider is skipped. The server can run on any non-empty
+    subset.
     """
     providers: list[SearchProvider] = [
         SearxngProvider(
@@ -45,9 +47,20 @@ def build_providers(config: Config) -> list[SearchProvider]:
         )
         log.info("Brave enabled (api_base=%s)", config.brave_api_base)
     else:
-        log.info(
-            "Brave disabled: BRAVE_API_KEY not set. Running in SearXNG-only mode."
+        log.info("Brave disabled: BRAVE_API_KEY not set.")
+
+    if config.exa_enabled:
+        providers.append(
+            ExaProvider(
+                api_base=config.exa_api_base,
+                api_key=config.exa_api_key or "",
+                timeout_seconds=config.search_timeout_seconds,
+                num_results_ceiling=config.exa_num_results_ceiling,
+            )
         )
+        log.info("Exa enabled (api_base=%s)", config.exa_api_base)
+    else:
+        log.info("Exa disabled: EXA_API_KEY not set.")
 
     return providers
 
