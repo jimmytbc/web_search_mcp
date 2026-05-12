@@ -1,9 +1,9 @@
 """The `search_web` tool handler — fusion pipeline with mode routing.
 
-Phase 3 behavior:
+Phase 3.1 behavior:
   - `mode` selects a provider subset:
-      balanced  → [searxng, brave, exa]
-      recall    → [searxng, exa]
+      balanced  → [serper, brave, exa]
+      recall    → [serper, exa]
       precision → [brave, exa]
     A mode-required provider that is not enabled emits a descriptive
     warning naming its env var; the pipeline continues with whatever
@@ -43,17 +43,17 @@ _ALLOWED_MODES = {"balanced", "recall", "precision"}
 # whatever providers are actually enabled at startup, so a mode that
 # names a disabled provider degrades gracefully rather than failing.
 _MODE_ROUTING: dict[str, frozenset[str]] = {
-    "balanced": frozenset({"searxng", "brave", "exa"}),
-    "recall": frozenset({"searxng", "exa"}),
+    "balanced": frozenset({"serper", "brave", "exa"}),
+    "recall": frozenset({"serper", "exa"}),
     "precision": frozenset({"brave", "exa"}),
 }
 
 # Provider name -> env var that gates its enablement. Used to name the
-# missing key in degradation warnings. SearXNG is always enabled (local
-# runtime dependency) so it has no entry here.
+# missing key in degradation warnings.
 _PROVIDER_REQUIRED_ENV: dict[str, str] = {
     "brave": "BRAVE_API_KEY",
     "exa": "EXA_API_KEY",
+    "serper": "SERPER_API_KEY",
 }
 
 # Low-diversity thresholds — spec-defined, centralized for clarity.

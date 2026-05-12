@@ -3,10 +3,9 @@
 Registers exactly one tool (`search_web`). `fetch_url` and
 `search_health` are reserved for Phase 4 and are not registered here.
 
-Provider set is assembled via `build_providers`, which enables Brave
-when `BRAVE_API_KEY` is set and Exa when `EXA_API_KEY` is set. Either
-or both can be omitted; the server runs on whatever subset is
-available (SearXNG is always enabled as a local runtime dependency).
+Provider set is assembled via `build_providers`, which enables Brave,
+Exa, and Serper when their respective API keys are set. Any subset
+can be omitted; the server runs on whatever is available.
 Mode-based routing in `tools/search_web.py` filters that set per call.
 """
 
@@ -42,8 +41,8 @@ async def search_web(
         query: Search query string. Required.
         max_results: Maximum results to return (1–10, default 5).
         mode: One of "balanced" | "recall" | "precision". Routing matrix:
-            balanced  → [searxng, brave, exa]
-            recall    → [searxng, exa]
+            balanced  → [serper, brave, exa]
+            recall    → [serper, exa]
             precision → [brave, exa]
             Disabled providers in a mode's subset are skipped with a
             descriptive warning. If the subset is empty, the call
@@ -79,12 +78,14 @@ async def search_web(
 def main() -> None:
     log.info(
         "starting web_search_mcp stdio server "
-        "(searxng_base_url=%s, timeout=%.1fs, default_max=%d, "
-        "brave_enabled=%s, recency_window_days=%d)",
-        _config.searxng_base_url,
+        "(timeout=%.1fs, default_max=%d, "
+        "brave_enabled=%s, exa_enabled=%s, serper_enabled=%s, "
+        "recency_window_days=%d)",
         _config.search_timeout_seconds,
         _config.default_max_results,
         _config.brave_enabled,
+        _config.exa_enabled,
+        _config.serper_enabled,
         _config.recency_window_days,
     )
     asyncio.run(mcp.run_stdio_async())

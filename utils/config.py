@@ -1,9 +1,9 @@
 """Environment-backed configuration.
 
-Phase 1 read three variables; Phase 2 adds Brave credentials and
-behavioral knobs, plus a RECENCY_WINDOW_DAYS setting used by the
-ranking layer. `.env` is loaded via python-dotenv at import time so
-operators can keep local secrets out of the shell profile.
+Brave, Exa, and Serper each enable when their respective API key is
+set. RECENCY_WINDOW_DAYS tunes the ranker's recency bonus. `.env` is
+loaded via python-dotenv at import time so operators can keep local
+secrets out of the shell profile.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from dotenv import load_dotenv
 # Load .env once at process start. Silent no-op if the file is absent.
 load_dotenv()
 
-DEFAULT_SEARXNG_BASE_URL = "http://localhost:8888"
 DEFAULT_SEARCH_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_RESULTS = 5
 MAX_RESULTS_UPPER_BOUND = 10
@@ -27,11 +26,12 @@ DEFAULT_RECENCY_WINDOW_DAYS = 30
 BRAVE_MAX_RESULTS_CEILING = 20
 DEFAULT_EXA_API_BASE = "https://api.exa.ai"
 DEFAULT_EXA_NUM_RESULTS_CEILING = 10
+DEFAULT_SERPER_API_BASE = "https://google.serper.dev"
+DEFAULT_SERPER_NUM_RESULTS_CEILING = 10
 
 
 @dataclass(frozen=True)
 class Config:
-    searxng_base_url: str
     search_timeout_seconds: float
     default_max_results: int
     brave_api_base: str
@@ -42,9 +42,12 @@ class Config:
     recency_window_days: int
     exa_api_base: str
     exa_api_key: Optional[str]
+    serper_api_base: str
+    serper_api_key: Optional[str]
     max_results_upper_bound: int = MAX_RESULTS_UPPER_BOUND
     brave_max_results_ceiling: int = BRAVE_MAX_RESULTS_CEILING
     exa_num_results_ceiling: int = DEFAULT_EXA_NUM_RESULTS_CEILING
+    serper_num_results_ceiling: int = DEFAULT_SERPER_NUM_RESULTS_CEILING
 
     @property
     def brave_enabled(self) -> bool:
@@ -53,6 +56,10 @@ class Config:
     @property
     def exa_enabled(self) -> bool:
         return bool(self.exa_api_key)
+
+    @property
+    def serper_enabled(self) -> bool:
+        return bool(self.serper_api_key)
 
 
 def _get_str(name: str) -> Optional[str]:
@@ -84,11 +91,10 @@ def _get_int(name: str, default: int) -> int:
 
 
 def load_config() -> Config:
-    base_url = os.environ.get("SEARXNG_BASE_URL", DEFAULT_SEARXNG_BASE_URL).rstrip("/")
     brave_api_base = os.environ.get("BRAVE_API_BASE", DEFAULT_BRAVE_API_BASE).rstrip("/")
     exa_api_base = os.environ.get("EXA_API_BASE", DEFAULT_EXA_API_BASE).rstrip("/")
+    serper_api_base = os.environ.get("SERPER_API_BASE", DEFAULT_SERPER_API_BASE).rstrip("/")
     return Config(
-        searxng_base_url=base_url,
         search_timeout_seconds=_get_float("SEARCH_TIMEOUT_SECONDS", DEFAULT_SEARCH_TIMEOUT_SECONDS),
         default_max_results=_get_int("DEFAULT_MAX_RESULTS", DEFAULT_MAX_RESULTS),
         brave_api_base=brave_api_base,
@@ -100,4 +106,9 @@ def load_config() -> Config:
         exa_api_base=exa_api_base,
         exa_api_key=_get_str("EXA_API_KEY"),
         exa_num_results_ceiling=_get_int("EXA_NUM_RESULTS_CEILING", DEFAULT_EXA_NUM_RESULTS_CEILING),
+        serper_api_base=serper_api_base,
+        serper_api_key=_get_str("SERPER_API_KEY"),
+        serper_num_results_ceiling=_get_int(
+            "SERPER_NUM_RESULTS_CEILING", DEFAULT_SERPER_NUM_RESULTS_CEILING
+        ),
     )

@@ -18,6 +18,9 @@ Behavior:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Optional
+
 from models.search_result import NormalizedResult
 
 from fusion.canonicalize import canonicalize_url
@@ -30,11 +33,48 @@ def _first_non_empty(values: list[str]) -> str:
     return ""
 
 
-def _first_non_null(values: list):
-    for v in values:
-        if v is not None:
-            return v
-    return None
+def _parse_iso(value: str) -> Optional[datetime]:
+    s = (value or "").strip()
+    if not s:
+        return None
+    try:
+        # fromisoformat accepts "Z" only from 3.11+; normalize defensively.
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _merge_published_date(values: list) -> Optional[str]:
+    """Field-level precedence for `published_date` across a dedupe group.
+
+    Rules (Phase 3.1):
+      - None is never preferred over a non-None value. This protects
+        Serper's always-None against silently overwriting Brave/Exa's
+        real dates when the same canonical URL surfaces from both.
+      - When two or more providers return non-None ISO-8601 timestamps
+        that differ, prefer the EARLIEST — i.e., the original publish
+        date rather than a later re-crawl timestamp.
+      - When no value is ISO-parseable but at least one is non-None,
+        fall back to the first non-None in input order (preserves the
+        pre-fix behavior for non-ISO strings such as Brave's `age`).
+    """
+    non_null = [v for v in values if v is not None]
+    if not non_null:
+        return None
+    parsed: list[tuple[datetime, str]] = []
+    for v in non_null:
+        if not isinstance(v, str):
+            continue
+        dt = _parse_iso(v)
+        if dt is not None:
+            parsed.append((dt, v))
+    if parsed:
+        parsed.sort(key=lambda t: t[0])
+        return parsed[0][1]
+    return non_null[0]
 
 
 def dedupe_by_canonical_url(
@@ -82,7 +122,7 @@ def dedupe_by_canonical_url(
                 domain=head.domain,
                 providers=providers_union,
                 provider_overlap=len(seen),
-                published_date=_first_non_null([m.published_date for m in group]),
+                published_date=_merge_published_date([m.published_date for m in group]),
                 content_type=head.content_type,
                 confidence=head.confidence,
                 rank_score=None,

@@ -1,9 +1,12 @@
 """Normalization of RawSearchResult -> NormalizedResult.
 
-Phase 1 is single-provider (SearXNG only), so:
-  - `providers` is always ["searxng"].
-  - `provider_overlap` is always 1.
-  - `published_date` is null (SearXNG does not reliably surface dates).
+Per-provider invariants set at this layer:
+  - `providers` is initialised to `[raw.provider]`; dedupe merges
+    cross-provider hits into a union later.
+  - `provider_overlap` is always 1 at this layer; dedupe recomputes
+    it after cross-provider merging.
+  - `published_date` flows through unchanged from the raw result;
+    providers that do not surface dates land here as None.
   - `content_type` is heuristically derived from the URL domain via a
     small static dict below. Pluggable/configurable in later phases
     per handoff §15.
@@ -92,9 +95,6 @@ def compute_confidence(raw_rank: int) -> float:
 
 def normalize(raw: RawSearchResult) -> NormalizedResult:
     domain = extract_domain(raw.url)
-    # Phase 2: keep published_date from the raw result when the provider
-    # supplies one (Brave exposes `age` / `page_age`; SearXNG typically
-    # does not). Phase 1's SearXNG path still lands here with None.
     return NormalizedResult(
         title=raw.title,
         url=raw.url,

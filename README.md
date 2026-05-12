@@ -12,10 +12,69 @@ evidence-friendly payload for a downstream LLM agent.
   provenance merging, light reranking (overlap / trusted-domain / recency
   bonuses), and populated warnings (`degraded` / `partial_failure` plus
   low-diversity heuristics).
-- **Phase 3 - current.** Adds the Exa semantic-search adapter and
+- **Phase 3 - shipped.** Adds the Exa semantic-search adapter and
   activates mode-based routing (`balanced` / `recall` / `precision`
   each select a different provider subset).
+- **Phase 3.1 - shipped.** Retires SearXNG and swaps in Serper.dev as
+  the breadth provider. See [Why Phase 3.1?](#why-phase-31-searxng--serperdev)
+  below.
 - Phase 4 adds `fetch_url` and `search_health`.
+
+## Why Phase 3.1: SearXNG → Serper.dev
+
+**What changed:**
+- Removed the SearXNG provider, `SEARXNG_BASE_URL` env var, and the
+  SearXNG `settings.yml` operator runbook.
+- Added a Serper.dev provider (`POST https://google.serper.dev/search`,
+  `X-API-KEY` auth) gated on the new `SERPER_API_KEY` env var.
+- Serper slots into SearXNG's previous routing positions:
+  `balanced` and `recall` now call Serper instead of SearXNG;
+  `precision` is unchanged.
+- Hardened the cross-provider dedupe merge with field-level precedence
+  for `published_date`: a provider that returns `None` can never
+  overwrite a non-null date from another provider, and when multiple
+  providers return ISO-8601 timestamps the earliest wins (original
+  publish date rather than a later re-crawl).
+
+**Why the swap:**
+
+SearXNG was a self-hosted meta-search aggregating ~50 upstream
+engines, which gave it excellent keyword breadth on paper. In
+practice it proved unreliable as the breadth provider for this MCP:
+
+- **Operational fragility.** The local SearXNG container had to be
+  running for `balanced` and `recall` modes to function. Restarts,
+  config drift, and port conflicts on `localhost:8888` turned every
+  fresh dev environment into a setup chore.
+- **Constant `degraded` status from upstream engine flakiness.**
+  Several of SearXNG's bundled engines (`duckduckgo`, `karmasearch`,
+  the `brave.*` scrapers) routinely flagged as unresponsive,
+  surfacing in the MCP's `warnings` array on essentially every
+  query. The result was a `search_status: "degraded"` baseline that
+  swamped real degradation signals.
+- **Maintenance burden.** Avoiding the above required hand-editing
+  SearXNG's `settings.yml` to disable problem engines, restarting
+  the container, and re-doing the same edits whenever the SearXNG
+  image was updated. None of that maintenance was actually about
+  the MCP itself.
+
+Serper.dev was selected as the replacement because it provides
+keyword-search breadth via the Google SERP through a stable,
+hosted JSON API — no local runtime to babysit, no upstream engine
+flakiness to manage, and a contract simple enough to mirror the
+existing Brave/Exa adapter pattern exactly.
+
+**Accepted trade-offs:**
+
+- Serper is a paid hosted API, not free + self-hosted. Cost and
+  rate-limit management are now operator concerns (the MCP does
+  not enforce in-process budgeting).
+- Serper returns publication dates as relative strings ("3 days
+  ago") rather than ISO-8601. The adapter sets `published_date`
+  to `null` rather than parsing them, so the recency ranking bonus
+  does not fire for Serper-only results. The dedupe precedence fix
+  above ensures this never costs cross-provider results their real
+  dates.
 
 ## Why multi-provider search?
 
@@ -31,15 +90,14 @@ trustworthy signal.
 
 | Provider   | What it brings                                                                                                | Phase |
 | ---------- | ------------------------------------------------------------------------------------------------------------- | ----- |
-| **SearXNG**| Self-hosted meta-search; aggregates Google, Bing, DuckDuckGo, Qwant, Startpage, Wikipedia, and many more through a single endpoint. Free, private, and provides keyword-search breadth. | 1     |
 | **Brave**  | Independent web index (not a Google re-ranker). Official API with stable response contract. Fast, commercial-grade quality. | 2     |
 | **Exa**    | Semantic / embedding-based retrieval - finds conceptually similar content that keyword search misses.         | 3     |
+| **Serper** | Google SERP via a stable JSON API. Provides keyword-search breadth from the world's largest crawl. Returns publication dates as relative strings ("3 days ago") rather than ISO-8601. This adapter sets `published_date = None` for Serper results. Recency-based ranking signals do not apply to Serper-only results. | 3.1   |
 
-Each provider has a different retrieval bias. Keyword engines surface
-pages that match query terms; Exa's semantic search surfaces pages
-that match query *meaning*; meta-search catches the long tail of
-niche sites. Together they approximate a much broader view of the web
-than any one alone.
+Each provider has a different retrieval bias. Keyword engines (Brave,
+Serper) surface pages that match query terms; Exa's semantic search
+surfaces pages that match query *meaning*. Together they approximate
+a much broader view of the web than any one alone.
 
 ### How this helps a downstream LLM agent
 
@@ -71,10 +129,11 @@ can reason over directly:
   if any single provider ranked the solo result higher. This is the
   simplest possible form of cross-source triangulation - good enough
   to consistently promote canonical sources over SEO-optimized noise.
-- **Normalized schema across providers.** Brave's `age` / `page_age`,
-  SearXNG's `publishedDate`, and (future) Exa's metadata all map into
-  the same `published_date` field. The agent writes one parser, not
-  three.
+- **Normalized schema across providers.** Brave's `age` / `page_age`
+  and Exa's `publishedDate` both map into the same `published_date`
+  field. Serper returns relative strings ("3 days ago") and is not
+  parsed, so Serper results carry `published_date = null`. The agent
+  writes one parser regardless of which provider surfaced a result.
 - **Transparent, tunable scoring.** All weights live in one file
   (`tools/search_web.py`) with inline comments. No black-box reranker
   - if an operator decides recency matters more, it's a one-line edit.
@@ -99,22 +158,18 @@ can reason over directly:
 
 - Python 3.11
 - [uv](https://docs.astral.sh/uv/)
-- A running SearXNG instance with JSON output enabled (default
-  `http://localhost:8888`). Test with:
-  ```
-  curl 'http://localhost:8888/search?format=json&q=python' | head
-  ```
-- Optional: a Brave Search API key (`BRAVE_API_KEY`) and/or an Exa
-  API key (`EXA_API_KEY`). If either is omitted, the server logs a
-  one-line notice at startup and that provider is skipped. Modes that
-  require a missing provider degrade to whatever subset is available
-  (see [Mode-routing matrix](#mode-routing-matrix) below).
+- At least one provider API key (`BRAVE_API_KEY`, `EXA_API_KEY`, or
+  `SERPER_API_KEY`). If any is omitted, the server logs a one-line
+  notice at startup and that provider is skipped. Modes whose subset
+  has no enabled provider return `search_status: "failed"` without
+  contacting any provider (see [Mode-routing matrix](#mode-routing-matrix)
+  below).
 
 ## Setup
 
 ```
 uv sync
-cp .env.example .env   # optional - add your BRAVE_API_KEY here if you have one
+cp .env.example .env   # add at least one provider API key
 ```
 
 > **Important:** put `.env` at the **repo root** (next to `pyproject.toml`),
@@ -122,88 +177,13 @@ cp .env.example .env   # optional - add your BRAVE_API_KEY here if you have one
 > placed there will be lost. `load_dotenv()` only walks up from the
 > working directory, so a `.env` nested inside `.venv/` is never found.
 
-### Recommended SearXNG configuration
-
-SearXNG is a meta-search that aggregates ~50 upstream engines. A few of
-those engines interact badly with this MCP and should be disabled to
-avoid permanent `degraded` status on every query:
-
-| Engine in SearXNG   | Why to disable                                                                                            |
-| ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `brave`             | Scrapes `brave.com` HTML. Brave aggressively blocks scrapers and this MCP already calls Brave's API directly - fully redundant. |
-| `brave.images` / `.videos` / `.news` | Same issue; same redundancy.                                                               |
-| `karmasearch` (all variants) | Upstream meta-search with frequent availability issues; tends to time out and flood the warnings array. |
-| `duckduckgo`        | Frequently flagged as unresponsive in live testing — surfaces as a persistent `"SearXNG reported unresponsive engines: duckduckgo"` warning that pushes every query to `degraded` status. |
-
-**How to disable** - edit SearXNG's `settings.yml`. For each engine
-listed above, add `disabled: true` as the last line of its block:
-
-```yaml
-engines:
-  # ...
-  - name: brave
-    engine: brave
-    shortcut: br
-    categories: [general, web]
-    brave_category: search
-    disabled: true        # <-- add this line
-
-  - name: karmasearch
-    engine: karmasearch
-    categories: [general, web]
-    search_type: web
-    shortcut: ka
-    disabled: true        # <-- add this line
-
-  - name: karmasearch videos
-    engine: karmasearch
-    categories: [general, web]
-    search_type: videos
-    shortcut: kav
-    disabled: true        # <-- add this line
-
-  # Optional but recommended - disable the remaining brave.*/karmasearch.*
-  # sub-engines for the same reasons.
-```
-
-**Finding `settings.yml`:**
-
-- **Local install:** typically `/etc/searxng/settings.yml`.
-- **Docker, bind-mounted config:** run
-  `docker inspect <container-id> --format '{{ range .Mounts }}{{ .Type }}  {{ .Source }} → {{ .Destination }}{{println}}{{ end }}'`
-  and look for the line pointing at `/etc/searxng`. Edit the file at
-  the printed `Source` path.
-- **Docker, no bind mount:** copy the default out, edit, mount it back:
-  ```bash
-  docker cp <container-id>:/etc/searxng/settings.yml ./settings.yml
-  # edit ./settings.yml, then update your docker-compose.yml / run command
-  # to mount it back to /etc/searxng/settings.yml
-  ```
-
-Restart the SearXNG container after editing:
-
-```bash
-docker restart <container-id>
-```
-
-Then verify with:
-
-```bash
-uv run python scripts/query.py "openai"
-```
-
-A clean run returns `"search_status": "ok"` and `"warnings": []`.
-If specific engines still appear in warnings, add them to your
-`settings.yml` disable list the same way.
-
 ### Environment variables
 
 | Variable                    | Required | Default                     | Purpose / valid values                                                                                     |
 | --------------------------- | -------- | --------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `SEARXNG_BASE_URL`          | yes      | `http://localhost:8888`     | SearXNG base URL; JSON output must be enabled.                                                             |
 | `SEARCH_TIMEOUT_SECONDS`    | no       | `10`                        | Per-request HTTP timeout (seconds). Any positive number.                                                   |
 | `DEFAULT_MAX_RESULTS`       | no       | `5`                         | Default `max_results` if the caller omits it. Clamped to `1..10`.                                          |
-| `BRAVE_API_KEY`             | no       | *(unset)*                   | Brave Search subscription token. Unset = Brave disabled; SearXNG-only mode.                                |
+| `BRAVE_API_KEY`             | no       | *(unset)*                   | Brave Search subscription token. Unset = Brave disabled. Required for `balanced` and `precision` modes.    |
 | `BRAVE_API_BASE`            | no       | `https://api.search.brave.com` | Brave API base URL. Override only for non-default endpoints.                                            |
 | `BRAVE_DEFAULT_COUNTRY`     | no       | *(unset)*                   | Two-letter ISO country code. Examples: `US`, `GB`, `SG`, `DE`. Unset = no localization.                    |
 | `BRAVE_DEFAULT_SEARCH_LANG` | no       | *(unset)*                   | Two-letter language code. Examples: `en`, `es`, `fr`, `ja`. Unset = no language hint.                      |
@@ -211,18 +191,21 @@ If specific engines still appear in warnings, add them to your
 | `EXA_API_KEY`               | no       | *(unset)*                   | Exa API key. Unset = Exa disabled. Required for `recall` and `precision` modes (see mode-routing matrix).  |
 | `EXA_API_BASE`              | no       | `https://api.exa.ai`        | Exa API base URL. Override only for non-default endpoints.                                                 |
 | `EXA_NUM_RESULTS_CEILING`   | no       | `10`                        | Cap on `numResults` sent to Exa per request. Tune down to reduce per-call cost. Any positive integer.      |
+| `SERPER_API_KEY`            | no       | *(unset)*                   | Serper.dev API key. Unset = Serper disabled. Required for `balanced` and `recall` modes.                   |
+| `SERPER_API_BASE`           | no       | `https://google.serper.dev` | Serper API base URL. Override only for non-default endpoints.                                              |
+| `SERPER_NUM_RESULTS_CEILING`| no       | `10`                        | Cap on `num` sent to Serper per request. Tune down to reduce per-call cost. Any positive integer.          |
 | `RECENCY_WINDOW_DAYS`       | no       | `30`                        | Days from today inside which a dated result earns a ranking recency bonus. Any positive integer.           |
 
-### Registering provider API keys (Brave, Exa)
+### Registering provider API keys (Brave, Exa, Serper)
 
 Either path works - pick one per key. The server loads `.env` via
 `python-dotenv` at startup, so values set via the Claude Desktop config
 `env` block override anything in `.env` for that launch.
 
 **Option A - local `.env` file (recommended for development).**
-Copy `.env.example` → `.env` and fill in `BRAVE_API_KEY` and/or
-`EXA_API_KEY`. The `.env` file is in `.gitignore` and will not be
-committed.
+Copy `.env.example` → `.env` and fill in `BRAVE_API_KEY`, `EXA_API_KEY`,
+and/or `SERPER_API_KEY`. The `.env` file is in `.gitignore` and will not
+be committed.
 
 **Option B - Claude Desktop config `env` block.** Put the keys in the
 `env` block of `claude_desktop_config.json` (see the sample below). Values
@@ -254,9 +237,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
         "server.py"
       ],
       "env": {
-        "SEARXNG_BASE_URL": "http://localhost:8888",
         "BRAVE_API_KEY": "your-brave-subscription-token",
-        "EXA_API_KEY": "your-exa-api-key"
+        "EXA_API_KEY": "your-exa-api-key",
+        "SERPER_API_KEY": "your-serper-api-key"
       }
     }
   }
@@ -285,11 +268,11 @@ Restart Claude Desktop after editing.
 
 ### Mode-routing matrix
 
-| Mode        | Providers called          | Intent                                                  |
-| ----------- | ------------------------- | ------------------------------------------------------- |
-| `balanced`  | `searxng`, `brave`, `exa` | Default. All three for maximum cross-source confirmation. |
-| `recall`    | `searxng`, `exa`          | Breadth + semantic discovery; drops the commercial keyword index. |
-| `precision` | `brave`, `exa`            | Commercial-grade keyword + semantic; drops the meta-search long tail. |
+| Mode        | Providers called         | Intent                                                  |
+| ----------- | ------------------------ | ------------------------------------------------------- |
+| `balanced`  | `serper`, `brave`, `exa` | Default. All three for maximum cross-source confirmation. |
+| `recall`    | `serper`, `exa`          | Keyword breadth + semantic discovery; drops the commercial keyword index. |
+| `precision` | `brave`, `exa`           | Commercial-grade keyword + semantic; drops the high-breadth keyword index. |
 
 Fusion behavior (canonicalization, dedupe, ranking, confidence) is
 identical across all three modes — only the called provider set
@@ -306,7 +289,7 @@ var. If the intersection is empty (e.g., `precision` mode with neither
 {
   "query": "bitcoin price",
   "search_status": "ok",
-  "providers_used": ["searxng", "brave", "exa"],
+  "providers_used": ["serper", "brave", "exa"],
   "warnings": [],
   "results": [
     {
@@ -314,7 +297,7 @@ var. If the intersection is empty (e.g., `precision` mode with neither
       "url": "https://www.coingecko.com/en/coins/bitcoin",
       "snippet": "Bitcoin live price, market cap, and volume.",
       "domain": "coingecko.com",
-      "providers": ["searxng", "brave", "exa"],
+      "providers": ["serper", "brave", "exa"],
       "provider_overlap": 3,
       "published_date": "2026-04-20T12:00:00Z",
       "content_type": "market_data",
@@ -325,7 +308,7 @@ var. If the intersection is empty (e.g., `precision` mode with neither
       "url": "https://en.wikipedia.org/wiki/Bitcoin",
       "snippet": "Bitcoin is a cryptocurrency …",
       "domain": "en.wikipedia.org",
-      "providers": ["searxng"],
+      "providers": ["serper"],
       "provider_overlap": 1,
       "published_date": null,
       "content_type": "reference",
@@ -344,8 +327,7 @@ confirmation.
 
 - `"ok"` - all called providers succeeded; no warnings.
 - `"degraded"` - all called providers succeeded, but at least one warning
-  is present (e.g., SearXNG unresponsive engines, low source/provider
-  diversity).
+  is present (e.g., low source/provider diversity).
 - `"partial_failure"` - at least one provider failed (timeout / error /
   malformed JSON) and at least one other provider returned usable results.
 - `"failed"` - every called provider failed, OR zero usable results after
@@ -402,25 +384,26 @@ uv run python scripts/query.py "your query" 10 precision   # max_results + mode
 ```
 
 Output is the same JSON the MCP would return. Uses `.env` for
-configuration, so make sure `BRAVE_API_KEY` and `EXA_API_KEY` are set
-at the repo root (not inside `.venv/`) if you want full multi-provider
-output. Modes that require a missing key will degrade with a warning.
+configuration, so make sure `BRAVE_API_KEY`, `EXA_API_KEY`, and
+`SERPER_API_KEY` are set at the repo root (not inside `.venv/`) if you
+want full multi-provider output. Modes that require a missing key will
+degrade with a warning.
 
 If a downstream caller reports broken results, this script is the
 fastest way to isolate the MCP's fused output from anything happening
 client-side.
 
-## Phase 3 limitations
+## Current limitations
 
-Not implemented in Phase 3 (by design - these land in later phases):
+Not implemented yet (by design - these land in later phases):
 
 - `fetch_url` tool (Phase 4)
 - `search_health` tool (Phase 4)
 - Persistent cache, on-disk TTL, authentication, HTTP/SSE transport
 - Secondary dedupe heuristics (same-domain + near-title). Canonical URL
   is the only dedupe signal.
-- In-MCP cost or rate-limit logic for paid providers (Brave, Exa).
-  Delegated to the operator.
+- In-MCP cost or rate-limit logic for paid providers (Brave, Exa,
+  Serper). Delegated to the operator.
 
 Phase build contracts and per-session rules of engagement are kept as
 local dev artifacts and are not published with the repo.
