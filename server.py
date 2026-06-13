@@ -12,6 +12,7 @@ Mode-based routing in `tools/search_web.py` filters that set per call.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from fastmcp import FastMCP
 
@@ -134,11 +135,13 @@ async def search_health() -> dict:
 
 
 def main() -> None:
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    port = int(os.environ.get("MCP_PORT", "8000"))
     log.info(
-        "starting web_search_mcp stdio server "
-        "(timeout=%.1fs, default_max=%d, "
+        "starting web_search_mcp (transport=%s, timeout=%.1fs, default_max=%d, "
         "brave_enabled=%s, exa_enabled=%s, serper_enabled=%s, "
         "recency_window_days=%d)",
+        transport,
         _config.search_timeout_seconds,
         _config.default_max_results,
         _config.brave_enabled,
@@ -146,7 +149,15 @@ def main() -> None:
         _config.serper_enabled,
         _config.recency_window_days,
     )
-    asyncio.run(mcp.run_stdio_async())
+    if transport == "http":
+        asyncio.run(mcp.run_http_async(
+            host="0.0.0.0",
+            port=port,
+            transport="sse",
+            show_banner=False,
+        ))
+    else:
+        asyncio.run(mcp.run_stdio_async())
 
 
 if __name__ == "__main__":
