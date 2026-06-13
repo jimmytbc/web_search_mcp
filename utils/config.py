@@ -28,6 +28,10 @@ DEFAULT_EXA_API_BASE = "https://api.exa.ai"
 DEFAULT_EXA_NUM_RESULTS_CEILING = 10
 DEFAULT_SERPER_API_BASE = "https://google.serper.dev"
 DEFAULT_SERPER_NUM_RESULTS_CEILING = 10
+DEFAULT_FETCH_URL_TIMEOUT_SECONDS = 15.0
+DEFAULT_FETCH_URL_MAX_BODY_BYTES = 2_000_000
+# Bump the version segment alongside the project version in pyproject.toml.
+DEFAULT_FETCH_URL_USER_AGENT = "web_search_mcp/0.4 (+fetch_url)"
 
 
 @dataclass(frozen=True)
@@ -44,6 +48,12 @@ class Config:
     exa_api_key: Optional[str]
     serper_api_base: str
     serper_api_key: Optional[str]
+    fetch_url_timeout_seconds: float
+    fetch_url_max_body_bytes: int
+    fetch_url_user_agent: str
+    fetch_url_respect_robots: bool
+    fetch_url_allow_private: bool
+    search_health_dry_run: bool
     max_results_upper_bound: int = MAX_RESULTS_UPPER_BOUND
     brave_max_results_ceiling: int = BRAVE_MAX_RESULTS_CEILING
     exa_num_results_ceiling: int = DEFAULT_EXA_NUM_RESULTS_CEILING
@@ -90,6 +100,18 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    lowered = raw.strip().lower()
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    return default
+
+
 def load_config() -> Config:
     brave_api_base = os.environ.get("BRAVE_API_BASE", DEFAULT_BRAVE_API_BASE).rstrip("/")
     exa_api_base = os.environ.get("EXA_API_BASE", DEFAULT_EXA_API_BASE).rstrip("/")
@@ -108,6 +130,18 @@ def load_config() -> Config:
         exa_num_results_ceiling=_get_int("EXA_NUM_RESULTS_CEILING", DEFAULT_EXA_NUM_RESULTS_CEILING),
         serper_api_base=serper_api_base,
         serper_api_key=_get_str("SERPER_API_KEY"),
+        fetch_url_timeout_seconds=_get_float(
+            "FETCH_URL_TIMEOUT_SECONDS", DEFAULT_FETCH_URL_TIMEOUT_SECONDS
+        ),
+        fetch_url_max_body_bytes=_get_int(
+            "FETCH_URL_MAX_BODY_BYTES", DEFAULT_FETCH_URL_MAX_BODY_BYTES
+        ),
+        fetch_url_user_agent=(
+            _get_str("FETCH_URL_USER_AGENT") or DEFAULT_FETCH_URL_USER_AGENT
+        ),
+        fetch_url_respect_robots=_get_bool("FETCH_URL_RESPECT_ROBOTS", True),
+        fetch_url_allow_private=_get_bool("FETCH_URL_ALLOW_PRIVATE", False),
+        search_health_dry_run=_get_bool("SEARCH_HEALTH_DRY_RUN", False),
         serper_num_results_ceiling=_get_int(
             "SERPER_NUM_RESULTS_CEILING", DEFAULT_SERPER_NUM_RESULTS_CEILING
         ),

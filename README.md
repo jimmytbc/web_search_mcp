@@ -2,7 +2,9 @@
 
 A local MCP server exposing a unified `search_web` tool that queries configured
 search backends, normalizes results into a shared schema, and returns an
-evidence-friendly payload for a downstream LLM agent.
+evidence-friendly payload for a downstream LLM agent — plus `fetch_url`
+(static page fetch + main-content extraction) and `search_health`
+(provider connectivity / auth / mode-availability report).
 
 ## Status
 
@@ -18,7 +20,11 @@ evidence-friendly payload for a downstream LLM agent.
 - **Phase 3.1 - shipped.** Retires SearXNG and swaps in Serper.dev as
   the breadth provider. See [Why Phase 3.1?](#why-phase-31-searxng--serperdev)
   below.
-- Phase 4 adds `fetch_url` and `search_health`.
+- **Phase 4 - shipped.** Adds the `fetch_url` tool (static-HTML fetch
+  with trafilatura main-content extraction, robots.txt respect, and
+  private-address blocking) and the `search_health` tool (per-provider
+  connectivity + auth-validity probes and mode-availability summary).
+  Completes the original 4-phase roadmap.
 
 ## Why Phase 3.1: SearXNG → Serper.dev
 
@@ -143,11 +149,14 @@ can reason over directly:
 - **Not an AI search engine.** No LLM calls happen inside this server.
   It fuses raw provider output and returns structured JSON - the
   reasoning stays with the calling agent.
-- **Not a content fetcher.** `search_web` returns URLs + snippets.
-  Extracting full page content is left to the caller (e.g., a
-  downstream `fetch_url` MCP, Firecrawl, Playwright). This separation
-  is deliberate: search and fetch have very different failure modes
-  and rate limits, and coupling them would hurt both.
+- **Not a JS renderer or a crawler.** `fetch_url` performs a static
+  HTML fetch of one URL per call - no JavaScript rendering, no
+  link-following, no site crawling. JavaScript-rendered SPAs come back
+  `degraded` with a thin-text warning. Private, loopback, link-local,
+  and carrier-NAT addresses are blocked by default, and robots.txt is
+  respected by default. Search and fetch stay deliberately decoupled:
+  they have very different failure modes and rate limits, and
+  `fetch_url` never auto-fetches `search_web` results.
 - **Not a replacement for RAG over curated corpora.** When you know
   exactly which documents matter, a vector DB over that corpus beats
   open-web search. This MCP is for the case where the agent doesn't
@@ -195,6 +204,12 @@ cp .env.example .env   # add at least one provider API key
 | `SERPER_API_BASE`           | no       | `https://google.serper.dev` | Serper API base URL. Override only for non-default endpoints.                                              |
 | `SERPER_NUM_RESULTS_CEILING`| no       | `10`                        | Cap on `num` sent to Serper per request. Tune down to reduce per-call cost. Any positive integer.          |
 | `RECENCY_WINDOW_DAYS`       | no       | `30`                        | Days from today inside which a dated result earns a ranking recency bonus. Any positive integer.           |
+| `FETCH_URL_TIMEOUT_SECONDS` | no       | `15`                        | Total wall-clock budget for one `fetch_url` call (robots fetch + redirects + body read combined). Any positive number. |
+| `FETCH_URL_MAX_BODY_BYTES`  | no       | `2000000`                   | Cap on the decompressed response body. Larger bodies are truncated with a warning. Any positive integer.   |
+| `FETCH_URL_USER_AGENT`      | no       | `web_search_mcp/0.4 (+fetch_url)` | User-Agent sent on `fetch_url` requests, including robots.txt fetches.                              |
+| `FETCH_URL_RESPECT_ROBOTS`  | no       | `true`                      | Honor robots.txt (disallowed URLs return `failed` without fetching). Valid: `true` / `false`.              |
+| `FETCH_URL_ALLOW_PRIVATE`   | no       | `false`                     | **Danger:** `true` disables all private/local address blocking, including across redirects. Trusted use only. |
+| `SEARCH_HEALTH_DRY_RUN`     | no       | `false`                     | `true` = `search_health` skips live probes (free static view; `reachable`/`auth_ok` stay `null`).          |
 
 ### Registering provider API keys (Brave, Exa, Serper)
 
@@ -373,6 +388,84 @@ normalized response. TTL = session; the cache dies on server restart.
 Repeat calls within the same session return from cache without hitting
 any provider. Visible in the server logs as `cache HIT`.
 
+`fetch_url` has its own session-lifetime cache (`utils/fetch_cache.py`),
+keyed by canonical URL. Only `ok` and `degraded` outcomes are cached;
+`failed` outcomes are retried on every call. Parsed robots.txt results
+are also cached per host for the session.
+
+## `fetch_url` - example
+
+```
+fetch_url(url="https://en.wikipedia.org/wiki/Python_(programming_language)")
+```
+
+Returns:
+
+```json
+{
+  "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+  "status": "ok",
+  "content_type": "text/html; charset=UTF-8",
+  "title": "Python (programming language) - Wikipedia",
+  "text": "Python is a high-level, general-purpose programming language...",
+  "metadata": {"site_name": "Wikipedia"},
+  "warnings": []
+}
+```
+
+- `status` values: `ok` (fetched, meaningful text extracted),
+  `degraded` (fetched, but the text is thin or the content type is not
+  extractable HTML — typical for JavaScript-rendered SPAs, PDFs,
+  images), `failed` (not fetched: non-2xx, timeout, blocked scheme or
+  private address, robots.txt disallow, or redirect limit).
+- Static HTML only — no JavaScript rendering (a Phase 5 candidate).
+- One URL per call; the agent loops over multiple URLs.
+- Redirects are followed manually (max 5 hops) with the private-address
+  guard re-applied on every hop.
+- `metadata` carries `published_date` / `author` / `site_name` only
+  when the extractor found them — absent fields are omitted, never
+  `null`.
+
+## `search_health` - example
+
+```
+search_health()
+```
+
+Returns:
+
+```json
+{
+  "status": "ok",
+  "providers": [
+    {"name": "brave",  "enabled": true, "reachable": true, "auth_ok": true, "last_status": "HTTP 200", "warnings": []},
+    {"name": "exa",    "enabled": true, "reachable": true, "auth_ok": true, "last_status": "HTTP 200", "warnings": []},
+    {"name": "serper", "enabled": true, "reachable": true, "auth_ok": true, "last_status": "HTTP 200", "warnings": []}
+  ],
+  "modes": {
+    "balanced":  {"available": true},
+    "recall":    {"available": true},
+    "precision": {"available": true}
+  }
+}
+```
+
+- Live mode sends one minimal probe search (`"ping"`, one result) per
+  **enabled** provider, in parallel. Each probe is a billable API call
+  (Exa's probe additionally incurs its contents/highlights retrieval -
+  that is the frozen adapter contract).
+- `reachable` / `auth_ok` are nullable: `null` means "could not be
+  determined" (timeouts, network errors, dry-run).
+- Auth failures (HTTP 401/403/422 - the Brave-422 / Serper-403
+  incident signatures) report `reachable: true, auth_ok: false`. This
+  is the pre-flight check that catches stale-key/env-precedence traps
+  before they surface as broken searches.
+- `modes` availability is derived from which providers are enabled
+  (a mode is available when at least one of its providers is enabled);
+  probe outcomes never change mode availability.
+- `SEARCH_HEALTH_DRY_RUN=true` skips all live calls and reports
+  enablement + mode availability only - free and near-instant.
+
 ## Diagnostics
 
 For ad-hoc queries against the full fusion pipeline without going through
@@ -393,13 +486,28 @@ If a downstream caller reports broken results, this script is the
 fastest way to isolate the MCP's fused output from anything happening
 client-side.
 
+The Phase 4 tools have a sibling diagnostics script:
+
+```
+uv run python scripts/diag.py fetch https://example.org/article
+uv run python scripts/diag.py health
+```
+
+`health` in live mode costs one billable search call per enabled
+provider; set `SEARCH_HEALTH_DRY_RUN=true` for a free static view.
+
 ## Current limitations
 
-Not implemented yet (by design - these land in later phases):
-
-- `fetch_url` tool (Phase 4)
-- `search_health` tool (Phase 4)
-- Persistent cache, on-disk TTL, authentication, HTTP/SSE transport
+- `fetch_url` is static HTML only — no JavaScript rendering. SPA pages
+  return `degraded` with a thin-text warning (JS rendering is a
+  Phase 5 candidate).
+- `fetch_url` takes a single URL per call — no batch `urls[]` input.
+- robots.txt is respected by default (`FETCH_URL_RESPECT_ROBOTS=false`
+  to opt out); private/local addresses are blocked by default
+  (`FETCH_URL_ALLOW_PRIVATE=true` to opt out — trusted use only).
+- `search_health` live probes cost one API call per enabled provider
+  on every invocation — no probe cooldown in v1.
+- Persistent cache, on-disk TTL, authentication, HTTP/SSE transport.
 - Secondary dedupe heuristics (same-domain + near-title). Canonical URL
   is the only dedupe signal.
 - In-MCP cost or rate-limit logic for paid providers (Brave, Exa,

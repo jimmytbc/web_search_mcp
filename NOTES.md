@@ -76,3 +76,38 @@ them.
   shorter snippet. Candidate follow-ups: cap snippet length at e.g.
   500 chars, or trim per-highlight. No code change made — flagging
   for product-owner triage.
+
+## Phase 5 parking list (recorded at Phase 4 ship, 2026-06-12)
+
+Out-of-scope items deliberately deferred from Phase 4 (per phase-4.md
+TASK 11 and decisions ratified by the product owner 2026-06-12):
+
+- **JS rendering for fetch_url** (env or per-call opt-in; Playwright-
+  class dependency footprint was rejected for v1 — D1).
+- **Batch `urls[]` fetch** — re-introduces `partial_failure` to the
+  status vocabulary (D4).
+- **Per-provider success/failure counters** in search_web plus the
+  Serper-only-hit-count diagnostic from the Phase 3.1 §7 observation
+  (D11 — search_web stays untouched).
+- **Content-type classifier coupling** — fetch_url returns the raw
+  HTTP Content-Type header; sharing search_web's domain classifier
+  was rejected for v1 (D13).
+- **search_health probe cooldown / result caching** — v1 probes on
+  every invocation by design (D9).
+- **User-Agent string derived from package metadata** — currently a
+  config default ("web_search_mcp/0.4"), bumped manually alongside
+  the project version.
+- **DNS-rebinding TOCTOU residual risk in fetch_url** (ratified D-a):
+  the URL-policy guard resolves and validates every A/AAAA record,
+  but httpx re-resolves at connect time, so a rebinding DNS server
+  could still steer the connect to a private address. Full fix = IP
+  pinning (connect to the validated IP with Host/SNI override).
+  Accepted for v1; revisit if the MCP ever runs on a network with
+  sensitive internal services.
+- **Port policy for fetch_url** (ratified D-c): arbitrary ports on
+  public hosts are accepted in v1; a port allowlist is a Phase 5
+  candidate.
+- **Per-provider auth-failure code maps in search_health** (ratified):
+  v1 applies the blanket 401/403/422 → auth-failure mapping across
+  all providers (422 is Brave-specific lore). Refine per provider if
+  a misclassification is ever observed.
