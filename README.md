@@ -228,16 +228,39 @@ here travel with the Claude Desktop profile rather than the repo checkout.
 
 ## Run the server
 
+### Local (stdio) — development default
+
 ```
 uv run python server.py
 ```
 
-The server speaks MCP over stdio. Logs go to stderr - stdout is reserved
+The server speaks MCP over stdio. Logs go to stderr; stdout is reserved
 for the MCP protocol.
+
+### Remote (HTTP/SSE) — Docker deployment
+
+`MCP_TRANSPORT=http` switches the server to an SSE endpoint on port 8000
+(or `MCP_PORT=<n>`). This is the mode used when running on a remote machine.
+
+```bash
+# on the remote host
+cp .env.example .env   # fill in API keys
+docker compose up -d --build
+```
+
+The `docker-compose.yml` sets `MCP_TRANSPORT=http` and reads keys from `.env`.
+API keys stay on the remote host; they are not needed on the client machine.
+
+Two additional env vars for remote mode:
+
+| Variable        | Default | Purpose |
+|-----------------|---------|---------|
+| `MCP_TRANSPORT` | `stdio` | Set to `http` for SSE/HTTP server mode. |
+| `MCP_PORT`      | `8000`  | Port the HTTP server listens on. |
 
 ### Register with Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**Local (stdio)** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -260,6 +283,29 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   }
 }
 ```
+
+**Remote (HTTP/SSE)** — point Claude Desktop at the running container via
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote). API keys are not
+required on the client side.
+
+```json
+{
+  "mcpServers": {
+    "web_search_mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://<host-ip>:8000/sse",
+        "--allow-http"
+      ]
+    }
+  }
+}
+```
+
+`--allow-http` is required for plain-HTTP LAN addresses. Use HTTPS + remove
+the flag if you terminate TLS in front of the container.
 
 Restart Claude Desktop after editing.
 
