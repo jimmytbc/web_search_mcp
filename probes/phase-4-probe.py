@@ -9,9 +9,9 @@ not exist yet, and must read PASS on the final acceptance run.
 
 Run profiles:
   - pre-implementation: (vi) must PASS once trafilatura is installed;
-    (i)-(v) and (vii) may read RED (module not yet implemented). Any
-    FAIL is an unexpected failure — stop and surface.
-  - final gate: all seven must read PASS (plus WARN-only skips where
+    (i)-(v), (vii), (viii) may read RED (module not yet implemented).
+    Any FAIL is an unexpected failure — stop and surface.
+  - final gate: all eight must read PASS (plus WARN-only skips where
     the live network is unavailable).
 
 Note on env loading: this probe does NOT read .env (matches the
@@ -39,6 +39,10 @@ Assertions:
         Offline, hard.
   (vii) fetch_url("http://127.0.0.1/") returns status="failed" with
         the private-address blocking warning, with zero network I/O.
+        Offline, hard.
+  (viii) DNS-rebind guard: fetch_url("http://localhost/") resolves the
+        hostname via getaddrinfo, detects the loopback result, and
+        returns status="failed" before any TCP connection is attempted.
         Offline, hard.
 """
 
@@ -348,6 +352,45 @@ def assertion_vii_private_block(missing: bool) -> bool:
     return True
 
 
+def assertion_viii_dns_rebind_guard(missing: bool) -> bool:
+    label = "(viii) DNS-rebind guard: hostname resolving to loopback blocked before connection"
+    if missing:
+        _red(label, "tools/fetch_url.py not yet patched")
+        return True
+    try:
+        import socket
+
+        from tools.fetch_url import run_fetch_url
+
+        real_create_connection = socket.create_connection
+
+        def _no_network(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("TCP connection attempted — DNS-rebinding guard failed to fire before connect")
+
+        socket.create_connection = _no_network
+        try:
+            config = _synthetic_config()
+            envelope = asyncio.run(run_fetch_url("http://localhost/", config))
+        finally:
+            socket.create_connection = real_create_connection
+    except AssertionError as e:
+        _fail(label, str(e))
+        return False
+    except Exception as e:
+        _fail(label, f"raised: {e!r}")
+        return False
+
+    if envelope.get("status") != "failed":
+        _fail(label, f"status={envelope.get('status')!r}, expected 'failed'")
+        return False
+    warnings = envelope.get("warnings") or []
+    if not any("private or local address" in w and "localhost" in w for w in warnings):
+        _fail(label, f"warnings={warnings!r} missing private-address text for localhost")
+        return False
+    _pass(label, f"failed with warning {warnings[0]!r:.80} — no TCP connection made")
+    return True
+
+
 def main() -> int:
     print("=" * 64)
     print("Phase 4 probe — web_search_mcp")
@@ -373,6 +416,7 @@ def main() -> int:
         assertion_v_robots_disallow(missing),
         assertion_vi_trafilatura(),
         assertion_vii_private_block(missing),
+        assertion_viii_dns_rebind_guard(missing),
     ]
     passed = sum(1 for r in results if r)
     total = len(results)
@@ -382,7 +426,8 @@ def main() -> int:
         profile = "pre-implementation (RED allowed)" if missing else "final gate"
         print(f"SUMMARY: {passed}/{total} assertions clean [{profile}]. Phase 0 gate OPEN.")
         return 0
-    print(f"SUMMARY: {passed}/{total} assertions clean. Phase 0 gate CLOSED.")
+    failed_count = total - passed
+    print(f"SUMMARY: {passed}/{total} assertions clean ({failed_count} failed). Phase 0 gate CLOSED.")
     return 1
 
 
