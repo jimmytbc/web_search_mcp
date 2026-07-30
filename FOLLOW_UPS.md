@@ -6,20 +6,21 @@ endpoint is now `/mcp`).
 
 ## Open
 
-### F-1 - SDK pin blocks MCP 2026-07-28
+### F-1 - Native MCP 2026-07-28 waits on fastmcp 4.0 stable
 
-- `pyproject.toml` floor-pins `fastmcp>=3.2.4` (locked 3.2.4, transitive
-  `mcp` 1.27.0, protocol ceiling 2025-11-25). Bump deliberately once a
-  2026-07-28-capable release is vetted (§7: dependency edits need explicit
-  authorisation). The unbounded floor means a casual lock refresh can jump
-  majors - consider an upper bound.
+- 2026-07-30: bumped to `fastmcp>=3.4.5,<4` under operator authorisation
+  (upper bound added - 4.x is a breaking line). fastmcp 3.x hard-pins
+  `mcp<2.0`, so protocol ceiling stays 2025-11-25. The 2026-07-28-native
+  line is fastmcp 4.x (requires mcp>=2), currently **beta only**
+  (`4.0.0b1`, 2026-07-28). Bump to 4.x when a stable release lands and has
+  been vetted. Deprecation-clean and safe within the 12-month window
+  meanwhile.
 
-### F-2 - venv drift vs uv.lock
+### F-2 - venv drift vs uv.lock ✅ resolved 2026-07-30
 
-- The venv contains both `fastmcp-3.2.4` and `fastmcp_slim-3.3.1` with
-  overlapping file records; installed tree does not match `uv.lock`.
-  `uv sync --frozen` to restore before any dependency work. (Left untouched
-  on 2026-07-30; smoke test ran against the drifted env and passed.)
+- Explained: `fastmcp` is a metapackage over `fastmcp-slim` (the earlier
+  fastmcp_slim presence was normal, not corruption). `uv lock && uv sync`
+  during the 3.4.5 bump reconciled the environment with the lockfile.
 
 ### F-3 - Auth + TLS for the exposed HTTP endpoint
 
