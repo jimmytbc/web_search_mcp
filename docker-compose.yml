@@ -11,6 +11,17 @@ services:
       - default
       - mcp_internal            # shared net so mcpo resolves this server by DNS name
 
+  web_search_mcp_chatgpt:
+    build: .
+    ports:
+      - "127.0.0.1:8010:8000"
+    env_file: .env
+    environment:
+      - MCP_TRANSPORT=http
+    restart: unless-stopped
+    networks:
+      - default
+
 networks:
   mcp_internal:
     external: true
