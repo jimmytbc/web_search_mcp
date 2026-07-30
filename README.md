@@ -237,10 +237,11 @@ uv run python server.py
 The server speaks MCP over stdio. Logs go to stderr; stdout is reserved
 for the MCP protocol.
 
-### Remote (HTTP/SSE) — Docker deployment
+### Remote (Streamable HTTP) — Docker deployment
 
-`MCP_TRANSPORT=http` switches the server to an SSE endpoint on port 8000
-(or `MCP_PORT=<n>`). This is the mode used when running on a remote machine.
+`MCP_TRANSPORT=http` switches the server to a streamable HTTP endpoint at
+`/mcp` on port 8000 (or `MCP_PORT=<n>`). This is the mode used when running
+on a remote machine.
 
 ```bash
 # on the remote host
@@ -255,7 +256,7 @@ Two additional env vars for remote mode:
 
 | Variable        | Default | Purpose |
 |-----------------|---------|---------|
-| `MCP_TRANSPORT` | `stdio` | Set to `http` for SSE/HTTP server mode. |
+| `MCP_TRANSPORT` | `stdio` | Set to `http` for streamable HTTP server mode. |
 | `MCP_PORT`      | `8000`  | Port the HTTP server listens on. |
 
 ### Register with Claude Desktop
@@ -296,7 +297,7 @@ required on the client side.
       "args": [
         "-y",
         "mcp-remote",
-        "http://<host-ip>:8000/sse",
+        "http://<host-ip>:8000/mcp",
         "--allow-http"
       ]
     }

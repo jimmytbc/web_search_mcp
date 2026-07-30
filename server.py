@@ -153,7 +153,7 @@ def main() -> None:
         asyncio.run(mcp.run_http_async(
             host="0.0.0.0",
             port=port,
-            transport="sse",
+            transport="http",
             show_banner=False,
         ))
     else:
