@@ -2,8 +2,15 @@ services:
   web_search_mcp:
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # loopback only: closes LAN exposure; localhost clients + mcpo (via mcp_internal) still reach it
     env_file: .env
     environment:
       - MCP_TRANSPORT=http
     restart: unless-stopped
+    networks:
+      - default
+      - mcp_internal            # shared net so mcpo resolves this server by DNS name
+
+networks:
+  mcp_internal:
+    external: true
