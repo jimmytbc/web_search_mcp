@@ -4,8 +4,8 @@ Registers three tools: `search_web` (Phases 1-3.1), plus `fetch_url`
 and `search_health` (Phase 4).
 
 Provider set is assembled via `build_providers`, which enables Brave,
-Exa, and Serper when their respective API keys are set. Any subset
-can be omitted; the server runs on whatever is available.
+Exa, and Serper when their respective API keys are set, plus anonymous
+Parallel when PARALLEL_ENABLED=true. Any subset can be omitted.
 Mode-based routing in `tools/search_web.py` filters that set per call.
 """
 
@@ -43,10 +43,13 @@ async def search_web(
     Args:
         query: Search query string. Required.
         max_results: Maximum results to return (1–10, default 5).
-        mode: One of "balanced" | "recall" | "precision". Routing matrix:
+        mode: One of "balanced" | "recall" | "precision" | "parallel".
+            Routing matrix:
             balanced  → [serper, brave, exa]
             recall    → [serper, exa]
             precision → [brave, exa]
+            parallel  → [parallel] (requires PARALLEL_ENABLED=true;
+                        anonymous Parallel Search MCP, no API key)
             Disabled providers in a mode's subset are skipped with a
             descriptive warning. If the subset is empty, the call
             returns search_status="failed" without contacting any
@@ -113,7 +116,7 @@ async def search_health() -> dict:
     """Report provider connectivity, auth validity, and mode availability.
 
     Live mode probes each enabled provider with one minimal search
-    call (this costs one billable API call per enabled provider).
+    call (paid-provider probes are billable; Parallel uses a free request).
     Set SEARCH_HEALTH_DRY_RUN=true to skip live probes and report
     enablement/mode availability only.
 
@@ -126,7 +129,7 @@ async def search_health() -> dict:
              "warnings": list[str]}, ...
           ],
           "modes": {
-            "balanced" | "recall" | "precision":
+            "balanced" | "recall" | "precision" | "parallel":
               {"available": bool, "reason"?: str}
           }
         }

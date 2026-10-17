@@ -5,6 +5,7 @@ Phase 3.1 behavior:
       balanced  → [serper, brave, exa]
       recall    → [serper, exa]
       precision → [brave, exa]
+      parallel  → [parallel] (opt-in via PARALLEL_ENABLED=true)
     A mode-required provider that is not enabled emits a descriptive
     warning naming its env var; the pipeline continues with whatever
     intersection remains. If the intersection is empty the call
@@ -35,8 +36,8 @@ from utils.logging import get_logger
 
 log = get_logger(__name__)
 
-Mode = Literal["balanced", "recall", "precision"]
-_ALLOWED_MODES = {"balanced", "recall", "precision"}
+Mode = Literal["balanced", "recall", "precision", "parallel"]
+_ALLOWED_MODES = {"balanced", "recall", "precision", "parallel"}
 
 # Mode-routing matrix. Each mode maps to the set of provider names it
 # wants called. Filtering against this set is an intersection with
@@ -46,6 +47,7 @@ _MODE_ROUTING: dict[str, frozenset[str]] = {
     "balanced": frozenset({"serper", "brave", "exa"}),
     "recall": frozenset({"serper", "exa"}),
     "precision": frozenset({"brave", "exa"}),
+    "parallel": frozenset({"parallel"}),
 }
 
 # Provider name -> env var that gates its enablement. Used to name the
@@ -54,6 +56,7 @@ _PROVIDER_REQUIRED_ENV: dict[str, str] = {
     "brave": "BRAVE_API_KEY",
     "exa": "EXA_API_KEY",
     "serper": "SERPER_API_KEY",
+    "parallel": "PARALLEL_ENABLED=true",
 }
 
 # Low-diversity thresholds — spec-defined, centralized for clarity.

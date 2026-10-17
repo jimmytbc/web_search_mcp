@@ -10,6 +10,7 @@ from __future__ import annotations
 from providers.base import SearchProvider
 from providers.brave import BraveProvider
 from providers.exa import ExaProvider
+from providers.parallel import ParallelProvider
 from providers.serper import SerperProvider
 from utils.config import Config
 from utils.logging import get_logger
@@ -23,7 +24,8 @@ def build_providers(config: Config) -> list[SearchProvider]:
     Brave, Exa, and Serper each enable only when their respective API
     key is set; otherwise a single INFO log line is emitted per
     provider and that provider is skipped. The server can run on any
-    non-empty subset.
+    non-empty subset. Parallel enables separately via PARALLEL_ENABLED
+    and is called only by the explicit parallel mode (or health probes).
     """
     providers: list[SearchProvider] = []
 
@@ -68,6 +70,10 @@ def build_providers(config: Config) -> list[SearchProvider]:
         log.info("Serper enabled (api_base=%s)", config.serper_api_base)
     else:
         log.info("Serper disabled: SERPER_API_KEY not set.")
+
+    if config.parallel_enabled:
+        providers.append(ParallelProvider(timeout_seconds=config.search_timeout_seconds))
+        log.info("Parallel enabled (anonymous Search MCP; explicit parallel mode only).")
 
     return providers
 

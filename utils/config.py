@@ -58,6 +58,7 @@ class Config:
     brave_max_results_ceiling: int = BRAVE_MAX_RESULTS_CEILING
     exa_num_results_ceiling: int = DEFAULT_EXA_NUM_RESULTS_CEILING
     serper_num_results_ceiling: int = DEFAULT_SERPER_NUM_RESULTS_CEILING
+    parallel_enabled: bool = False
 
     @property
     def brave_enabled(self) -> bool:
@@ -145,4 +146,5 @@ def load_config() -> Config:
         serper_num_results_ceiling=_get_int(
             "SERPER_NUM_RESULTS_CEILING", DEFAULT_SERPER_NUM_RESULTS_CEILING
         ),
+        parallel_enabled=_get_bool("PARALLEL_ENABLED", False),
     )
