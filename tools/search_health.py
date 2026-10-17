@@ -57,6 +57,7 @@ import httpx
 from providers.base import SearchProvider
 from providers.brave import BraveError
 from providers.exa import ExaError
+from providers.parallel import ParallelError
 from providers.serper import SerperError
 from tools.search_web import _MODE_ROUTING, _PROVIDER_REQUIRED_ENV
 from utils.config import Config
@@ -68,7 +69,7 @@ log = get_logger(__name__)
 PROBE_QUERY = "ping"
 _PROBE_MAX_RESULTS = 1
 
-_PROVIDER_ERRORS = (BraveError, ExaError, SerperError)
+_PROVIDER_ERRORS = (BraveError, ExaError, SerperError, ParallelError)
 _HTTP_CODE_RE = re.compile(r"returned HTTP (\d{3})")
 _AUTH_FAILURE_CODES = {401, 403, 422}
 
@@ -82,6 +83,7 @@ def _enabled_map(config: Config) -> dict[str, bool]:
         "brave": config.brave_enabled,
         "exa": config.exa_enabled,
         "serper": config.serper_enabled,
+        "parallel": config.parallel_enabled,
     }
 
 
@@ -90,6 +92,9 @@ def _mode_availability(config: Config) -> dict[str, dict]:
     enabled = {name for name, on in _enabled_map(config).items() if on}
     modes: dict[str, dict] = {}
     for mode, wanted in _MODE_ROUTING.items():
+        # Keep the default health report unchanged until this option is enabled.
+        if mode == "parallel" and not config.parallel_enabled:
+            continue
         present = wanted & enabled
         missing = sorted(wanted - enabled)
         entry: dict = {"available": bool(present)}
@@ -213,22 +218,23 @@ async def run_search_health(
 ) -> dict:
     enabled = _enabled_map(config)
     modes = _mode_availability(config)
+    order = _PROVIDER_ORDER + (("parallel",) if config.parallel_enabled else ())
 
     if config.search_health_dry_run:
-        entries = [_not_probed_entry(name, enabled[name]) for name in _PROVIDER_ORDER]
+        entries = [_not_probed_entry(name, enabled[name]) for name in order]
         status = _top_level_status_dry_run(config, modes)
         log.info("search_health dry-run status=%s", status)
         return {"status": status, "providers": entries, "modes": modes}
 
     by_name = {p.name: p for p in providers}
-    probe_targets = [by_name[name] for name in _PROVIDER_ORDER if name in by_name]
+    probe_targets = [by_name[name] for name in order if name in by_name]
     probed = await asyncio.gather(
         *[_probe_provider(p, config.search_timeout_seconds) for p in probe_targets],
     )
     probed_by_name = {entry["name"]: entry for entry in probed}
 
     entries = []
-    for name in _PROVIDER_ORDER:
+    for name in order:
         if name in probed_by_name:
             entries.append(probed_by_name[name])
         else:
